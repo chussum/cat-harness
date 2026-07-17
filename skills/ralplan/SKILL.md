@@ -180,7 +180,9 @@ sharing the same `NN`.
       previously crystallized decision, constraint, or non-goal. Cite the conflicting artifact and
       line/section.
    c. **Reconcile with the user via AskUserQuestion (always, regardless of mode)**. Never stop idle
-      with plain-text prose after the consensus loop.
+      with plain-text prose after the consensus loop. Phrase each confirmation in plain language
+      with technical terms glossed in parentheses on first use (router question-style rule) — the
+      approver may not be a developer.
       - If open items exist, confirm the open assumptions and conflicts **ONE AT A TIME**,
         weakest/highest-impact first, each with contextual options plus free text. If any
         confirmation reveals the plan diverges from user intent, route the consolidated correction
@@ -208,6 +210,8 @@ sharing the same `NN`.
 8. **Structured approval** — ALWAYS present the finalized plan via AskUserQuestion (never stop with
    plain text and no question; this is the gate's terminal action). Show the ADR summary (Decision,
    Drivers, Alternatives, Consequences) plus the `pending-approval.md` path — not the full body.
+   Write the summary and options in plain language, glossing technical terms in parentheses on
+   first use (router question-style rule).
    Options (free text is available via the tool's Other input):
    - **Refine further** — collect direction, run one more revision + review pass (steps 5b–5d; a
      user-directed pass is allowed even at the cap; the writer allows the `final → revision` edge

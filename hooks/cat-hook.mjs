@@ -533,6 +533,7 @@ const ROUTER_LADDER = [
   'Escapes: prompt prefixed "!" or "force:" bypasses gating this turn. Explicit user workflow choice always wins.',
   'Never implement from a spec/plan marked pending-approval without the user\'s explicit approval — "just do it" does not approve.',
   "User-facing language: mirror the user's language in every question, progress update, result, and spec/plan body; state JSON stays English.",
+  "Question style: write every question to the user in plain language a non-developer can follow — keep technical terms but gloss each on first use with a short parenthetical explanation, e.g. 마이그레이션(기존 데이터를 새 구조로 옮기는 작업) / build (turning code into something runnable); label options by outcome, not mechanism.",
 ];
 
 function buildRouterBlock(input) {

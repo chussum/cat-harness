@@ -157,6 +157,8 @@ Round {n} | Component: {target_component_name} | Targeting: {weakest_dimension} 
 
 Provide 2-4 contextually relevant options; AskUserQuestion adds free-text "Other" automatically (option pick → `selected`; Other → custom free text).
 
+**Question register (UX-writing rule).** Write every question and option for a reader with no development background — the person answering may be a designer or PM. Keep the technical term, but gloss it in parentheses on FIRST use in the conversation (e.g., 마이그레이션(기존 데이터를 새 구조로 옮기는 작업), API(프로그램끼리 데이터를 주고받는 통로)); after that, use the bare term so the reader graduates into the vocabulary. Label options by user-visible outcome, not implementation mechanism — mechanism detail belongs in the option's description line, also glossed. Simplify the language, never the decision.
+
 **Clarify non-answer:** if the reply is a question about the displayed choices rather than an answer ("what do you mean by X?", "what's the difference?"), answer the clarification briefly from interview context, then re-ask the EXACT same question via AskUserQuestion. A clarification is NOT scored, NOT recorded as a round answer, and skips Steps 2b′-2e — the round stays unresolved until a real option or Other answer arrives.
 
 ### Step 2b′: Auto-Answer Opted-Out Questions

@@ -94,6 +94,11 @@ explicit approval — "just do it" does not approve.
 result, and spec/plan body mirrors *your* language (write in Korean, get asked
 in Korean). Skill/agent prompt internals and state JSON stay English.
 
+**Questions anyone can answer**: interview and approval questions are written in
+plain language for non-developers — technical terms are kept but glossed in
+parentheses on first use (e.g., 마이그레이션(기존 데이터를 새 구조로 옮기는 작업)),
+so designers and PMs can answer confidently and pick up the vocabulary as they go.
+
 ### 2. `PreToolUse` — the mutation guard
 
 While a planning phase is active (deep-interview `interviewing`; ralplan

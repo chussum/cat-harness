@@ -346,6 +346,10 @@ orchestrator via artifact paths (see §6), never inline dumps of plan bodies.
 - User-facing language (guaranteed via a ROUTER_LADDER line injected every prompt): questions
   (AskUserQuestion), progress updates, results, and spec/plan/findings bodies mirror the USER's
   language; state JSON (envelopes, goals.json, ledger, gate field values) stays English.
+- Question register (ROUTER_LADDER line + deep-interview/ralplan skill rules): every question to
+  the user is written in plain language for non-developers — technical terms are KEPT but glossed
+  in parentheses on first use (learning-by-exposure, e.g. 마이그레이션(기존 데이터를 새 구조로 옮기는 작업));
+  options are labeled by outcome, not mechanism. Simplify the language, never the decision.
 - All JSON written by hooks/CLI: 2-space indent, trailing newline. All timestamps ISO8601 UTC.
 - Never `console.log` debug noise from hooks (stdout is the contract). Errors → stderr + audit.jsonl.
 - Version 0.1.0 everywhere.
