@@ -29,7 +29,7 @@ deep-interview skill run as generic subagents — NOT plugin agents (keeps the 4
 ```
 cat-harness/
 ├── .claude-plugin/
-│   ├── plugin.json               # name "cat-harness", version 0.1.0. Do NOT reference hooks here.
+│   ├── plugin.json               # name "cat-harness", version (bump every release). Do NOT reference hooks here.
 │   └── marketplace.json          # marketplace name "cat-harness", owner chussum, source "./"
 ├── hooks/
 │   ├── hooks.json                # UserPromptSubmit / PreToolUse (Edit|MultiEdit|Write|NotebookEdit|Bash|Skill) / Stop
