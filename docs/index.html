@@ -135,12 +135,12 @@ h1 em{font-style:normal;color:var(--blue)}
 .pains-sec{padding:clamp(50px,7vw,80px) 0}
 .pains{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
 @media(max-width:860px){.pains{grid-template-columns:1fr}}
-.pain-item{border:1px solid var(--hair);border-radius:16px;padding:20px 22px;background:var(--surface)}
+.pain-item{border:1px solid var(--hair);border-radius:16px;padding:20px 22px;background:var(--surface);display:flex;flex-direction:column}
 .pain-item .pq{color:var(--mist);font-size:14px;line-height:1.6}
 .pain-item .pq::before{content:"“";color:var(--dim)}
 .pain-item .pq::after{content:"”";color:var(--dim)}
 html[lang="ko"] .eyebrow.k{letter-spacing:.04em}
-.pain-item .pa{margin-top:12px;font-weight:700;font-size:13.5px;color:var(--ink)}
+.pain-item .pa{margin-top:auto;padding-top:14px;font-weight:700;font-size:13.5px;color:var(--ink)}
 .pain-item .pa::before{content:"→ ";color:var(--blue)}
 
 /* ---------- credo ---------- */
