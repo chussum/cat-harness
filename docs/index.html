@@ -43,8 +43,8 @@ a{color:inherit}
   font-family:var(--disp);font-size:12px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
   color:var(--blue);margin-bottom:16px;
 }
-h2{font-family:var(--disp);font-size:clamp(30px,4.8vw,46px);font-weight:700;letter-spacing:-.025em;line-height:1.18}
-.lede{font-size:clamp(15.5px,2vw,18px);color:var(--mist);max-width:620px;margin-top:16px}
+h2{font-family:var(--disp);font-size:clamp(30px,4.8vw,46px);font-weight:700;letter-spacing:-.025em;line-height:1.18;text-wrap:balance}
+.lede{font-size:clamp(15.5px,2vw,18px);color:var(--mist);max-width:620px;margin-top:16px;text-wrap:pretty}
 section{padding:clamp(76px,11vw,136px) 0;position:relative}
 .hairline-top{border-top:1px solid var(--hair)}
 
@@ -133,14 +133,14 @@ h1 em{font-style:normal;color:var(--blue)}
 /* ---------- credo ---------- */
 /* ---------- pains ---------- */
 .pains-sec{padding:clamp(50px,7vw,80px) 0}
-.pains{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px;align-items:start}
+.pains{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
 @media(max-width:860px){.pains{grid-template-columns:1fr}}
 .pain-item{border:1px solid var(--hair);border-radius:16px;padding:20px 22px;background:var(--surface);display:flex;flex-direction:column}
-.pain-item .pq{color:var(--mist);font-size:14px;line-height:1.6}
+.pain-item .pq{color:var(--mist);font-size:14px;line-height:1.6;text-wrap:balance}
 .pain-item .pq::before{content:"“";color:var(--dim)}
 .pain-item .pq::after{content:"”";color:var(--dim)}
 html[lang="ko"] .eyebrow.k{letter-spacing:.04em}
-.pain-item .pa{margin-top:14px;font-weight:700;font-size:13.5px;color:var(--ink)}
+.pain-item .pa{margin-top:14px;font-weight:700;font-size:13.5px;color:var(--ink);text-wrap:balance}
 .pain-item .pa::before{content:"→ ";color:var(--blue)}
 
 /* ---------- credo ---------- */
@@ -150,7 +150,7 @@ html[lang="ko"] .eyebrow.k{letter-spacing:.04em}
 @media(max-width:480px){.credo-grid{grid-template-columns:1fr}}
 .credo-item{border:1px solid var(--hair);border-radius:var(--radius);padding:24px 22px;background:var(--surface);transition:border-color .25s,transform .25s}
 .credo-item:hover{border-color:var(--blue-line);transform:translateY(-4px)}
-.credo-item .k{font-size:clamp(17px,2.1vw,20px);font-weight:700;letter-spacing:-.015em;line-height:1.35}
+.credo-item .k{font-size:clamp(17px,2.1vw,20px);font-weight:700;letter-spacing:-.015em;line-height:1.35;text-wrap:balance}
 .credo-item .e{font-family:var(--disp);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-top:10px}
 .credo-item .bar{width:30px;height:3px;border-radius:2px;background:var(--blue);margin-bottom:18px}
 
@@ -174,7 +174,7 @@ html[lang="ko"] .eyebrow.k{letter-spacing:.04em}
   display:inline-block;font-size:12px;font-weight:700;color:var(--blue);
   background:var(--blue-soft);border:1px solid var(--blue-line);border-radius:999px;padding:4px 13px;margin-bottom:14px;
 }
-.stage-panel p{color:var(--mist);margin-top:10px;max-width:660px}
+.stage-panel p{color:var(--mist);margin-top:10px;max-width:660px;text-wrap:pretty}
 .stage-panel ul{margin:18px 0 0;padding:0;list-style:none;display:grid;gap:9px}
 .stage-panel li{display:flex;gap:11px;font-size:14px;color:#c7cdd6}
 .stage-panel li::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--blue);margin-top:9px}
@@ -209,7 +209,7 @@ html[lang="ko"] .eyebrow.k{letter-spacing:.04em}
 .floor-badge.show{display:inline-block;animation:pop .35s cubic-bezier(.2,.7,.3,1.4)}
 @keyframes pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
 .demo-right .q-eyebrow{font-family:var(--disp);font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--dim);text-transform:uppercase}
-.demo-right .q{font-size:clamp(18px,2.5vw,23px);font-weight:700;letter-spacing:-.015em;margin-top:9px;min-height:2.4em}
+.demo-right .q{font-size:clamp(18px,2.5vw,23px);font-weight:700;letter-spacing:-.015em;margin-top:9px;min-height:2.4em;text-wrap:balance}
 .opts{display:grid;gap:10px;margin-top:20px}
 .opt{
   text-align:left;border:1px solid var(--hair2);background:var(--raised);border-radius:14px;
@@ -238,7 +238,7 @@ html[lang="ko"] .eyebrow.k{letter-spacing:.04em}
 
 /* ---------- brand line ---------- */
 .brandline-sec{padding:clamp(90px,13vw,150px) 0;text-align:center}
-.brandline{font-family:var(--disp);font-size:clamp(28px,5vw,52px);font-weight:700;letter-spacing:-.025em;line-height:1.22}
+.brandline{font-family:var(--disp);font-size:clamp(28px,5vw,52px);font-weight:700;letter-spacing:-.025em;line-height:1.22;text-wrap:balance}
 .brandline em{font-style:normal;color:var(--blue)}
 .brandsub{margin-top:16px;color:var(--dim);font-size:14px}
 
