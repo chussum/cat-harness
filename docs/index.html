@@ -64,7 +64,7 @@ nav{
   border-bottom:1px solid var(--hair);
 }
 .nav-in{max-width:1020px;margin:0 auto;padding:0 22px;height:56px;display:flex;align-items:center;gap:22px}
-.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:700;letter-spacing:-.02em;font-size:15.5px;text-decoration:none}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:700;letter-spacing:-.02em;font-size:15.5px;text-decoration:none;white-space:nowrap}
 .brand svg{width:25px;height:25px}
 .nav-links{display:flex;gap:22px;margin-left:auto;align-items:center}
 .nav-links a{font-size:13px;color:var(--mist);text-decoration:none;transition:color .2s}
@@ -133,14 +133,18 @@ h1 em{font-style:normal;color:var(--blue)}
 /* ---------- credo ---------- */
 /* ---------- pains ---------- */
 .pains-sec{padding:clamp(50px,7vw,80px) 0}
-.pains{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
-@media(max-width:860px){.pains{grid-template-columns:1fr}}
-.pain-item{border:1px solid var(--hair);border-radius:16px;padding:20px 22px;background:var(--surface);display:flex;flex-direction:column}
-.pain-item .pq{color:var(--mist);font-size:14px;line-height:1.6;text-wrap:balance}
+.pains{margin-top:14px}
+.pain-item{
+  display:grid;grid-template-columns:1.2fr 1fr;gap:28px;align-items:baseline;
+  padding:19px 2px;border-bottom:1px solid var(--hair);
+}
+.pain-item:first-child{border-top:1px solid var(--hair)}
+@media(max-width:760px){.pain-item{grid-template-columns:1fr;gap:7px;padding:16px 2px}}
+.pain-item .pq{color:var(--mist);font-size:14.5px;line-height:1.6}
 .pain-item .pq::before{content:"“";color:var(--dim)}
 .pain-item .pq::after{content:"”";color:var(--dim)}
 html[lang="ko"] .eyebrow.k{letter-spacing:.04em}
-.pain-item .pa{margin-top:14px;font-weight:700;font-size:13.5px;color:var(--ink);text-wrap:balance}
+.pain-item .pa{font-weight:700;font-size:14px;color:var(--ink)}
 .pain-item .pa::before{content:"→ ";color:var(--blue)}
 
 /* ---------- credo ---------- */
