@@ -352,7 +352,7 @@ orchestrator via artifact paths (see §6), never inline dumps of plan bodies.
   options are labeled by outcome, not mechanism. Simplify the language, never the decision.
 - All JSON written by hooks/CLI: 2-space indent, trailing newline. All timestamps ISO8601 UTC.
 - Never `console.log` debug noise from hooks (stdout is the contract). Errors → stderr + audit.jsonl.
-- Version 0.1.0 everywhere.
+- Version 0.2.0 everywhere — bump on every released change (the plugin cache is keyed by version; same-version pushes may not reach installed users).
 
 ## Fidelity sources (read before writing)
 
