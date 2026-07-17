@@ -4,7 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cat-harness — 추측하기 전에, 묻습니다</title>
-<meta name="description" content="Claude Code 위에서 도는 워크플로 하네스. 모호한 요청은 인터뷰로 좁히고, 계획은 합의로 검증하고, 완료는 증거로 남깁니다. A workflow harness for Claude Code.">
+<meta name="description" content="AI가 엉뚱한 걸 만들어 오나요? cat-harness는 모호하면 묻고, 계획은 심사받고, 완료는 증거로 증명하는 Claude Code 하네스입니다. Figma 링크만 있으면 디자인 검증까지.">
+<meta property="og:title" content="cat-harness — 추측하기 전에, 묻습니다">
+<meta property="og:description" content="모호하면 묻고, 계획은 심사받고, 완료는 증거로 증명하는 Claude Code 워크플로 하네스. Figma 링크만 있으면 디자인 검증까지. Ask-before-building workflow harness for Claude Code.">
+<meta property="og:image" content="https://chussum.github.io/cat-harness/og.png">
+<meta property="og:url" content="https://chussum.github.io/cat-harness/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='54' r='34' fill='%23242b37'/%3E%3Cpath d='M22 42 L30 12 L48 32 Z' fill='%23242b37'/%3E%3Cpath d='M78 42 L70 12 L52 32 Z' fill='%23242b37'/%3E%3Ccircle cx='38' cy='52' r='8' fill='%23f2f5f9'/%3E%3Ccircle cx='62' cy='52' r='8' fill='%23f2f5f9'/%3E%3Ccircle cx='38' cy='52' r='3.6' fill='%2305070c'/%3E%3Ccircle cx='62' cy='52' r='3.6' fill='%2305070c'/%3E%3Cpath d='M46 64 L54 64 L50 69 Z' fill='%23f5a623'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,6 +33,7 @@ body{
   font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Segoe UI","Malgun Gothic",sans-serif;
   background:var(--void); color:var(--ink);
   -webkit-font-smoothing:antialiased; line-height:1.65; overflow-x:hidden;
+  word-break:keep-all;
 }
 ::selection{background:var(--blue); color:#05070c}
 a{color:inherit}
@@ -124,6 +131,19 @@ h1 em{font-style:normal;color:var(--blue)}
 .hero .homage b{color:var(--mist)}
 
 /* ---------- credo ---------- */
+/* ---------- pains ---------- */
+.pains-sec{padding:clamp(50px,7vw,80px) 0}
+.pains{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
+@media(max-width:860px){.pains{grid-template-columns:1fr}}
+.pain-item{border:1px solid var(--hair);border-radius:16px;padding:20px 22px;background:var(--surface)}
+.pain-item .pq{color:var(--mist);font-size:14px;line-height:1.6}
+.pain-item .pq::before{content:"“";color:var(--dim)}
+.pain-item .pq::after{content:"”";color:var(--dim)}
+html[lang="ko"] .eyebrow.k{letter-spacing:.04em}
+.pain-item .pa{margin-top:12px;font-weight:700;font-size:13.5px;color:var(--ink)}
+.pain-item .pa::before{content:"→ ";color:var(--blue)}
+
+/* ---------- credo ---------- */
 .credo{background:var(--field)}
 .credo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:46px}
 @media(max-width:860px){.credo-grid{grid-template-columns:repeat(2,1fr)}}
@@ -215,6 +235,15 @@ h1 em{font-style:normal;color:var(--blue)}
   font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;text-decoration:underline;text-underline-offset:4px;
 }
 .restart.show{display:inline-block}
+
+/* ---------- brand line ---------- */
+.brandline-sec{padding:clamp(90px,13vw,150px) 0;text-align:center}
+.brandline{font-family:var(--disp);font-size:clamp(28px,5vw,52px);font-weight:700;letter-spacing:-.025em;line-height:1.22}
+.brandline em{font-style:normal;color:var(--blue)}
+.brandsub{margin-top:16px;color:var(--dim);font-size:14px}
+
+/* ---------- design-qa kicker ---------- */
+.kicker{margin-top:18px;font-weight:700;color:var(--ink);font-size:14.5px}
 
 /* ---------- agents ---------- */
 .agent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:46px}
@@ -343,17 +372,28 @@ footer a{color:var(--dim)}
       <div class="qbubble" aria-hidden="true">?</div>
     </div>
     <h1 data-i18n-html="hero.h1">추측하기 전에,<br><em>묻습니다.</em></h1>
-    <p class="sub" data-i18n="hero.sub">cat-harness는 Claude Code 위에서 도는 워크플로 하네스입니다. 모호한 요청은 인터뷰로 좁히고, 계획은 합의로 검증하고, 완료는 증거로 남깁니다. 슬래시 명령 없이, 알아서.</p>
+    <p class="sub" data-i18n="hero.sub">"만들어줘" 한마디에 엉뚱한 걸 만들어 오고, "다 됐어요"는 믿기 어렵고. cat-harness는 그 습관을 끊는 Claude Code 하네스입니다 — 모호하면 묻고, 계획은 심사받고, 완료는 증거로 증명합니다. 설정 없이, 슬래시 명령 없이.</p>
     <div class="cta-row">
       <div class="install-pill mono">
         <span class="cmd" id="heroCmd">/plugin marketplace add chussum/cat-harness</span>
         <button class="copy-btn" data-copy="#heroCmd" data-i18n="btn.copy">복사</button>
       </div>
-      <a class="ghost-btn" href="#demo" data-i18n="hero.cta">인터뷰 받아보기</a>
+      <a class="ghost-btn" href="#demo" data-i18n="hero.cta">30초 인터뷰 받아보기</a>
     </div>
     <p class="homage" data-i18n-html="hero.homage">마스코트 <b>쿼리(Query)</b>는 모호도가 5% 아래로 내려올 때까지 움직이지 않습니다</p>
   </div>
 </header>
+
+<section class="pains-sec hairline-top" aria-label="pains">
+  <div class="wrap">
+    <p class="eyebrow k rv" data-i18n="pains.eyebrow">이런 적 있죠</p>
+    <div class="pains">
+      <div class="pain-item rv"><div class="pq" data-i18n="pains.q1">분명히 설명했는데, 이미 엉뚱한 코드를 쓰고 있다</div><div class="pa" data-i18n="pains.a1">모호하면 코드보다 질문이 먼저 나옵니다</div></div>
+      <div class="pain-item rv" style="transition-delay:.08s"><div class="pq" data-i18n="pains.q2">다 됐습니다 — 실행해 보면 안 돌아간다</div><div class="pa" data-i18n="pains.a2">증거 파일 없이는 완료로 인정되지 않습니다</div></div>
+      <div class="pain-item rv" style="transition-delay:.16s"><div class="pq" data-i18n="pains.q3">시안은 44px인데 구현은 38px, 눈으론 못 잡는다</div><div class="pa" data-i18n="pains.a3">Figma 수치와 computed style을 기계가 대조합니다</div></div>
+    </div>
+  </div>
+</section>
 
 <section class="credo hairline-top" id="credo">
   <div class="wrap">
@@ -425,6 +465,47 @@ footer a{color:var(--dim)}
   </div>
 </section>
 
+<section class="brandline-sec hairline-top" aria-label="brand">
+  <div class="wrap">
+    <p class="brandline rv" data-i18n-html="brand.line">어디로 튈지 모르는 고양이를 위한,<br><em>하네스.</em></p>
+    <p class="brandsub rv" data-i18n="brand.sub">그래서 이름이 cat-harness입니다.</p>
+  </div>
+</section>
+
+<section id="design-qa" class="hairline-top">
+  <div class="wrap">
+    <p class="eyebrow rv">Design QA</p>
+    <h2 class="rv" data-i18n-html="dqa.h2">Figma 링크 하나면,<br>디자인까지 검증합니다</h2>
+    <div class="dqa">
+      <div class="dqa-copy rv">
+        <p class="lede" style="margin-top:0" data-i18n="dqa.lede">픽셀 차이를 눈으로 잡는 시대는 끝났습니다. 시안의 숫자와 구현의 computed style을 기계가 대조하고, 어긋나면 완료를 막습니다.</p>
+        <ul>
+          <li data-i18n="dqa.i1">Figma 노드에서 spec 수치 추출 — 간격·색상·타이포를 숫자로</li>
+          <li data-i18n="dqa.i2">디자인 브레이크포인트 그대로 Playwright 캡처 (1:1 원칙)</li>
+          <li data-i18n="dqa.i3">computed-style 실측값과 대조, 심각도 분류</li>
+          <li data-i18n="dqa.i4">Critical/Major 갭은 완료를 차단 — 픽셀 몇 개도 Major는 Major</li>
+        </ul>
+        <p class="kicker" data-i18n="dqa.kicker">디자이너의 "시안이랑 조금 달라요" 코멘트 — 받기 전에 잡으세요.</p>
+      </div>
+      <div class="dqa-visual rv">
+        <div class="frames">
+          <div class="frame figma"><div class="bar" data-i18n-html="dqa.fbar"><b>Figma</b> · 기대</div><div class="cv">
+            <div class="sk" style="height:14px;width:62%"></div>
+            <div class="sk" style="height:9px;width:88%;margin-top:10px"></div>
+            <div class="sk" style="height:9px;width:74%;margin-top:6px"></div>
+            <div class="btn-sk"></div></div></div>
+          <div class="frame impl"><div class="bar" data-i18n-html="dqa.ibar"><b>구현</b> · 실측</div><div class="cv">
+            <div class="sk" style="height:14px;width:62%"></div>
+            <div class="sk" style="height:9px;width:88%;margin-top:10px"></div>
+            <div class="sk" style="height:9px;width:74%;margin-top:6px"></div>
+            <div class="btn-sk"></div></div></div>
+        </div>
+        <div class="gap-tag">height 44 ≠ 38 · Major</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="agents" class="hairline-top">
   <div class="wrap">
     <p class="eyebrow rv">Agents</p>
@@ -471,44 +552,11 @@ G001 <span class="ok">✓ complete</span> — <span class="s" data-i18n="ev.tail
   </div>
 </section>
 
-<section id="design-qa" class="hairline-top">
-  <div class="wrap">
-    <p class="eyebrow rv">Design QA</p>
-    <h2 class="rv" data-i18n-html="dqa.h2">Figma 링크 하나면,<br>디자인까지 검증합니다</h2>
-    <div class="dqa">
-      <div class="dqa-copy rv">
-        <p class="lede" style="margin-top:0" data-i18n="dqa.lede">UI 목표의 완료 게이트에 디자인 검증 레인이 자동으로 붙습니다. 눈대중이 아니라 수치로.</p>
-        <ul>
-          <li data-i18n="dqa.i1">Figma 노드에서 spec 수치 추출 — 간격·색상·타이포를 숫자로</li>
-          <li data-i18n="dqa.i2">디자인 브레이크포인트 그대로 Playwright 캡처 (1:1 원칙)</li>
-          <li data-i18n="dqa.i3">computed-style 실측값과 대조, 심각도 분류</li>
-          <li data-i18n="dqa.i4">Critical/Major 갭은 완료를 차단 — 픽셀 몇 개도 Major는 Major</li>
-        </ul>
-      </div>
-      <div class="dqa-visual rv">
-        <div class="frames">
-          <div class="frame figma"><div class="bar" data-i18n-html="dqa.fbar"><b>Figma</b> · 기대</div><div class="cv">
-            <div class="sk" style="height:14px;width:62%"></div>
-            <div class="sk" style="height:9px;width:88%;margin-top:10px"></div>
-            <div class="sk" style="height:9px;width:74%;margin-top:6px"></div>
-            <div class="btn-sk"></div></div></div>
-          <div class="frame impl"><div class="bar" data-i18n-html="dqa.ibar"><b>구현</b> · 실측</div><div class="cv">
-            <div class="sk" style="height:14px;width:62%"></div>
-            <div class="sk" style="height:9px;width:88%;margin-top:10px"></div>
-            <div class="sk" style="height:9px;width:74%;margin-top:6px"></div>
-            <div class="btn-sk"></div></div></div>
-        </div>
-        <div class="gap-tag">height 44 ≠ 38 · Major</div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section id="install" class="hairline-top">
   <div class="wrap">
     <p class="eyebrow rv">Install</p>
     <h2 class="rv" data-i18n="ins.h2">1분이면 충분합니다</h2>
-    <p class="lede rv" data-i18n="ins.lede">Node.js 18+만 있으면 됩니다. 설치 후엔 그냥 평소처럼 요청하세요 — 라우터가 알아서 워크플로를 태웁니다.</p>
+    <p class="lede rv" data-i18n="ins.lede">Node.js 18+가 전부입니다. 계정도, 설정 파일도 없습니다. 설치 후엔 평소처럼 요청하세요 — 라우터가 알아서 태웁니다.</p>
     <div class="term rv">
       <div class="term-bar"><i></i><i></i><i></i></div>
       <div class="term-body mono">
@@ -537,8 +585,17 @@ const EN = {
   'nav.philosophy':'Philosophy','nav.how':'How it works','nav.demo':'Interview demo','nav.agents':'Agents','nav.install':'Install',
   'btn.copy':'Copy','btn.copied':'Copied ✓',
   'hero.h1':'Before building,<br><em>it asks.</em>',
-  'hero.sub':'cat-harness is a workflow harness that runs on top of Claude Code. Vague requests get interviewed, plans get reviewed to consensus, and completion leaves evidence. No slash commands — it routes on its own.',
-  'hero.cta':'Try the interview',
+  'hero.sub':'One vague prompt and it builds the wrong thing; a "done" you can\'t trust. cat-harness breaks the habit — it asks when things are vague, gets every plan reviewed, and proves completion with evidence. No config, no slash commands.',
+  'hero.cta':'Take the 30-second interview',
+  'pains.eyebrow':'Sound familiar?',
+  'pains.q1':'You explained it clearly — it\'s already writing the wrong code',
+  'pains.a1':'When it\'s vague, questions come before code',
+  'pains.q2':'All done! — except it doesn\'t run',
+  'pains.a2':'Nothing counts as done without evidence files',
+  'pains.q3':'The design says 44px, the build says 38px — eyes can\'t catch it',
+  'pains.a3':'Figma values vs. computed styles, compared by machine',
+  'brand.line':'A harness for a cat<br>that could bolt <em>anywhere.</em>',
+  'brand.sub':'That\'s why it\'s called cat-harness.',
   'hero.homage':'<b>Query</b>, the mascot, won\'t move until ambiguity drops below 5%',
   'credo.h2':'Four promises',
   'credo.k1':'Never build<br>before asking','credo.e1':'묻기 전엔 만들지 않습니다',
@@ -565,14 +622,15 @@ const EN = {
   'ev.tail':'if goals.json changes by even one byte, receipt verify fails',
   'ev.caption':'Screenshots are checked down to file size and PNG magic bytes. With a Figma link, the design-QA lane compares computed styles numerically.',
   'dqa.h2':'One Figma link,<br>and design gets verified too',
-  'dqa.lede':'UI goals get a design-verification lane on their completion gate. Numbers, not eyeballs.',
+  'dqa.lede':'Stop catching pixel drift by eye. The design\'s numbers are checked against the build\'s computed styles — and mismatches block completion.',
+  'dqa.kicker':'Catch it before your designer does.',
   'dqa.i1':'Spec values extracted from Figma nodes — spacing, color, type as numbers',
   'dqa.i2':'Playwright captures at the design\'s own breakpoints (1:1 rule)',
   'dqa.i3':'Compared against computed styles, gaps classified by severity',
   'dqa.i4':'Critical/Major gaps block completion — a few pixels is still Major',
   'dqa.fbar':'<b>Figma</b> · expected','dqa.ibar':'<b>Impl</b> · measured',
   'ins.h2':'One minute is enough',
-  'ins.lede':'All you need is Node.js 18+. After installing, just ask as usual — the router picks the workflow.',
+  'ins.lede':'Node.js 18+ is all you need. No account, no config file. Then just ask as usual — the router takes it from there.',
   'ins.req':'In a hurry? Prefix a prompt with <span class="mono">!</span> or <span class="mono">force:</span> to skip the gate for that turn. Manual entry: <span class="mono">/cat-harness:interview · :plan · :execute · :team</span>',
   'ft.credit':'cat-harness · MIT License · born from the philosophy of <a href="https://github.com/Yeachan-Heo/gajae-code" target="_blank" rel="noopener">gajae-code</a>',
   'ft.query':'Query verified this page\'s completion, too 🐾',
