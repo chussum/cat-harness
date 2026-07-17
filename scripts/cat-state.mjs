@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * cat-state.mjs — the single sanctioned writer for cat-workflow runtime state.
+ * cat-state.mjs — the single sanctioned writer for cat-harness runtime state.
  * Implements DESIGN.md §4 exactly. Zero dependencies; node >= 18.
  *
  * Subcommands (all take --session <sid>; `-` reads stdin for JSON/file bodies):

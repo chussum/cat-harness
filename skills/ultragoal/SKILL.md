@@ -34,7 +34,7 @@ the leader (main thread) only. Never hand-edit these files; the PreToolUse guard
 writes to them even outside active runs. Subagents never run `cat-state.mjs` and never mutate
 `.cat/` — they return evidence; you checkpoint.
 
-Resolve `{sid}` from the `<cat-workflow-router>` context block (`state_root: .cat/_session-{sid}`);
+Resolve `{sid}` from the `<cat-harness-router>` context block (`state_root: .cat/_session-{sid}`);
 fallback: the `.cat/_session-*` directory with the freshest `.session-activity.json`.
 
 Use these exact commands instead of rediscovering syntax (every call takes `--session <sid>`;
@@ -83,7 +83,7 @@ Transition envelope example: `{"skill":"ultragoal","active":true,"current_phase"
 
 The Stop gate blocks ending the turn while `active:true` and phase is non-terminal — do not stop
 mid-run; keep working, or record `human_blocked` (below). The chain guard denies invoking a
-different cat-workflow skill while ultragoal is non-terminal: finish the run, or (only on an
+different cat-harness skill while ultragoal is non-terminal: finish the run, or (only on an
 explicit user cancel) append a `steering_note` ledger event with the reason, then
 `state clear --skill ultragoal`.
 
@@ -92,7 +92,7 @@ explicit user cancel) append a `steering_note` ledger event with the reason, the
 1. **Plan check (before activating).** Preferred input is an approved ralplan artifact
    (`plans/ralplan/{run-id}/pending-approval.md` with the user's explicit structured approval —
    "just do it" does not approve). If there is no approved plan or consensus artifact and the
-   work carries real architecture/sequencing/verification risk, recommend `cat-workflow:ralplan`
+   work carries real architecture/sequencing/verification risk, recommend `cat-harness:ralplan`
    first instead of activating ultragoal. Do not silently substitute ad-hoc execution for missing
    planning. When a plan exists, preserve its constraints and verification guidance in the brief
    and cite it in a `steering_note` ledger event after init.
@@ -164,7 +164,7 @@ For each goal, first `pending` (or first `failed` when retrying):
 ### Mandatory implementation delegation on big scope
 
 When a goal's implementation scope is **big enough**, you MUST delegate implementation to one or
-more `executor` subagents (Agent tool, `subagent_type: cat-workflow:executor`) instead of writing
+more `executor` subagents (Agent tool, `subagent_type: cat-harness:executor`) instead of writing
 the code inline. This is a hard requirement, not a preference: solo inline implementation of a big-scope
 goal is a gate violation, and the completion gate must treat missing delegation on a big-scope
 goal as a blocker.
@@ -282,7 +282,7 @@ A goal cannot be checkpointed `complete` until this gate has run, in order:
    carry the report through `iteration.evidence`; never add a new top-level gate key, never write
    advisory findings to the ledger.
 3. **Rerun verification** after the cleaner pass so reviewed evidence covers the cleaned code.
-4. **Architect review** — delegate `architect` (Agent tool, `subagent_type: cat-workflow:architect`) covering
+4. **Architect review** — delegate `architect` (Agent tool, `subagent_type: cat-harness:architect`) covering
    all three lanes: architecture-side (system boundaries, layering, data/control flow,
    operational risks); product-side (user-visible behavior, acceptance criteria, edge cases,
    regressions); code-side (maintainability, tests, integration points, unsafe shortcuts).
@@ -408,8 +408,8 @@ Ledger: .cat/_session-{sid}/ultragoal/ledger.jsonl (M events)
 ```
 
 Never claim the run (or any goal) is done without `receipt verify` success in this turn's
-transcript. If the user wants follow-up planning or clarification, invoke `cat-workflow:ralplan`
-or `cat-workflow:deep-interview` only after ultragoal is terminal (chain guard).
+transcript. If the user wants follow-up planning or clarification, invoke `cat-harness:ralplan`
+or `cat-harness:deep-interview` only after ultragoal is terminal (chain guard).
 
 ## Constraints
 
@@ -417,8 +417,8 @@ or `cat-workflow:deep-interview` only after ultragoal is terminal (chain guard).
   checkpoint, never mutate `.cat/`.
 - Sequential goal execution; parallelism only inside a goal (executor slices, joined review
   lanes). Pipeline overlap and validation batches are out of v1.
-- team is explicit and separate: never auto-launch `cat-workflow:team`; it never owns ultragoal
+- team is explicit and separate: never auto-launch `cat-harness:team`; it never owns ultragoal
   goals, checkpoints, or ledger state.
-- Recursion guard: subagents spawned by ultragoal never invoke cat-workflow skills.
+- Recursion guard: subagents spawned by ultragoal never invoke cat-harness skills.
 - Evidence over assertion: passed command outputs + real artifact files; receipts prove
   completion; `goals.json` status alone proves nothing.

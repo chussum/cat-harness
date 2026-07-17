@@ -24,7 +24,7 @@ Replace a vague idea with a crystal-clear specification: ask ONE targeted questi
 
 ## State and sanctioned writer
 
-Resolve `{sid}` from the `<cat-workflow-router>` context block (`state_root: .cat/_session-{sid}`); if absent, pick the newest `.cat/_session-*` by `.session-activity.json`; if none exists, mint one and run `init`. All state mutations go through the CLI — NEVER hand-edit files under `.cat/_session-{sid}/state/`:
+Resolve `{sid}` from the `<cat-harness-router>` context block (`state_root: .cat/_session-{sid}`); if absent, pick the newest `.cat/_session-*` by `.session-activity.json`; if none exists, mint one and run `init`. All state mutations go through the CLI — NEVER hand-edit files under `.cat/_session-{sid}/state/`:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/cat-state.mjs" init --session {sid}
@@ -387,7 +387,7 @@ Ask via AskUserQuestion: "Your spec is ready (ambiguity: {score}%). How would yo
 On selection, in this exact order:
 1. Verify the spec file exists on disk (the Stop gate requires it before `handoff`/`complete`).
 2. `state write --skill deep-interview --json '{"current_phase":"handoff","hud":{"nextAction":"handing off to {choice}"}}'`
-3. **ralplan/ultragoal/team**: invoke the Skill tool with `cat-workflow:{choice}`, passing the spec path as arguments/context (the chain guard permits this because deep-interview is in `handoff`). Immediately after the invocation is accepted, `state write --skill deep-interview --json '{"current_phase":"complete","active":false}'`, then follow the chosen skill. Pass the spec path and prompt-safe summary forward — never the raw oversized source material.
+3. **ralplan/ultragoal/team**: invoke the Skill tool with `cat-harness:{choice}`, passing the spec path as arguments/context (the chain guard permits this because deep-interview is in `handoff`). Immediately after the invocation is accepted, `state write --skill deep-interview --json '{"current_phase":"complete","active":false}'`, then follow the chosen skill. Pass the spec path and prompt-safe summary forward — never the raw oversized source material.
 4. **stop here**: `state write --skill deep-interview --json '{"current_phase":"complete","active":false}'` and stop with the spec marked pending-approval.
 
 Terminal writes always include `"active": false` so finished runs stop being advertised as active by the router.

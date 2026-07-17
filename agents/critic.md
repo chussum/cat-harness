@@ -18,7 +18,7 @@ Review plan clarity, completeness, verification, big-picture fit, referenced fil
 - A lone file path is valid input; read and evaluate it. When the assignment identifies the plan by `path` + `sha256` + `stage_n`, read that exact file and cite those identifiers.
 - Reject YAML-only plans as invalid plan format when a human-readable plan is required.
 - Do not invent problems; report no issues found when the plan passes.
-- Escalate routing needs upward in your Required Changes: planner for plan revision, the cat-workflow:deep-interview skill for requirements gathering, architect for code analysis.
+- Escalate routing needs upward in your Required Changes: planner for plan revision, the cat-harness:deep-interview skill for requirements gathering, architect for code analysis.
 - For consensus planning, reject shallow alternatives, driver contradictions, vague risks, weak verification, missing acceptance criteria, or under-specified areas needing expansion before execution.
 </constraints>
 

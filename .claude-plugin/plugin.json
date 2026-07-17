@@ -1,12 +1,12 @@
 {
-  "name": "cat-workflow",
+  "name": "cat-harness",
   "version": "0.1.0",
   "description": "Auto-gating interview→plan→execute workflow harness inspired by gajae-code",
   "author": {
     "name": "chussum"
   },
-  "homepage": "https://chussum.github.io/cat-workflow/",
-  "repository": "https://github.com/chussum/cat-workflow",
+  "homepage": "https://chussum.github.io/cat-harness/",
+  "repository": "https://github.com/chussum/cat-harness",
   "license": "MIT",
   "keywords": [
     "workflow",

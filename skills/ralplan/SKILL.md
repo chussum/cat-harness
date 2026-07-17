@@ -32,7 +32,7 @@ sha256-stamped and indexed.
 
 ## Bootstrap (before anything else)
 
-1. **Session id**: take `{sid}` from the `<cat-workflow-router>` context block injected this turn
+1. **Session id**: take `{sid}` from the `<cat-harness-router>` context block injected this turn
    (`state_root: .cat/_session-{sid}`). If absent, use the `.cat/_session-*/` directory with the most
    recent `.session-activity.json`. Run `cat-state init --session <sid>` (idempotent).
 2. **Resume check**: `cat-state state read --session <sid> --skill ralplan`. If a state exists with
@@ -60,7 +60,7 @@ as the planning input (pass its path to the planner) and skip the gate.
 **Gated** (vague — e.g. "improve the app", "fix this", "make it better", "add authentication" with no
 anchor): no signal and no spec → ask via AskUserQuestion: **Run deep-interview first (recommended)** /
 **Proceed with ralplan anyway** / **Cancel**. On deep-interview: invoke skill
-`cat-workflow:deep-interview` now (ralplan state was never seeded, so no chain guard applies) and
+`cat-harness:deep-interview` now (ralplan state was never seeded, so no chain guard applies) and
 stop here. On cancel: stop, write nothing.
 
 Once the gate passes, seed state and log the gate decision:
@@ -101,7 +101,7 @@ sharing the same `NN`.
 ## Consensus workflow
 
 1. **Planner draft** (phase `planner`). Spawn the `planner` agent (Agent tool,
-   `subagent_type: cat-workflow:planner`) ONCE with: the task (and deep-interview spec path if any),
+   `subagent_type: cat-harness:planner`) ONCE with: the task (and deep-interview spec path if any),
    deliberation mode, resolved cat-state path + `<sid>` + `<run_id>`, and the instruction to persist
    its plan via `artifact write --stage 01-planner --file -` and return ONLY the receipt plus a
    ≤10-line summary. The plan MUST open with a compact **RALPLAN-DR summary**:
@@ -122,8 +122,8 @@ sharing the same `NN`.
    feedback and go to step 5b (the writer allows the `planner → revision` edge for exactly this
    path). Otherwise proceed automatically.
 3. **Review fan-out** (phase `review` — `state write` the transition, then spawn). Launch a fresh
-   `architect` (`subagent_type: cat-workflow:architect`) and a fresh `critic`
-   (`subagent_type: cat-workflow:critic`) **in PARALLEL — both Agent calls in the same message** —
+   `architect` (`subagent_type: cat-harness:architect`) and a fresh `critic`
+   (`subagent_type: cat-harness:critic`) **in PARALLEL — both Agent calls in the same message** —
    against the SAME immutable planner artifact, identified by the receipt triple
    (`path`, `sha256`, `stage_n`). Critic is plan-only here and never consumes architect output, so
    the two lanes always run in the same parallel batch; if a critic pass ever had to evaluate
@@ -222,10 +222,10 @@ sharing the same `NN`.
 9. **Handoff** — on approval, never implement directly:
    a. `state write` phase `handoff`:
       `cat-state state write --session <sid> --skill ralplan --json '{"skill":"ralplan","active":true,"current_phase":"handoff","run_id":"<run_id>","hud":{"nextAction":"handing off to <ultragoal|team>"}}'`
-      (the PreToolUse chain guard only permits invoking another cat-workflow skill from `handoff` or
+      (the PreToolUse chain guard only permits invoking another cat-harness skill from `handoff` or
       a terminal phase; `handoff` deliberately does NOT release the Stop gate, so finish the chain
       same-turn).
-   b. Invoke skill `cat-workflow:ultragoal` (default) or `cat-workflow:team` (only when chosen) via
+   b. Invoke skill `cat-harness:ultragoal` (default) or `cat-harness:team` (only when chosen) via
       the Skill tool, passing the approved plan path `plans/ralplan/{run_id}/pending-approval.md`
       and the run receipts.
    c. Immediately after the invocation returns and the callee's instructions are loaded — before

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cat-workflow — 추측하기 전에, 묻습니다</title>
+<title>cat-harness — 추측하기 전에, 묻습니다</title>
 <meta name="description" content="Claude Code 위에서 도는 워크플로 하네스. 모호한 요청은 인터뷰로 좁히고, 계획은 합의로 검증하고, 완료는 증거로 남깁니다. A workflow harness for Claude Code.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='54' r='34' fill='%23242b37'/%3E%3Cpath d='M22 42 L30 12 L48 32 Z' fill='%23242b37'/%3E%3Cpath d='M78 42 L70 12 L52 32 Z' fill='%23242b37'/%3E%3Ccircle cx='38' cy='52' r='8' fill='%23f2f5f9'/%3E%3Ccircle cx='62' cy='52' r='8' fill='%23f2f5f9'/%3E%3Ccircle cx='38' cy='52' r='3.6' fill='%2305070c'/%3E%3Ccircle cx='62' cy='52' r='3.6' fill='%2305070c'/%3E%3Cpath d='M46 64 L54 64 L50 69 Z' fill='%23f5a623'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -318,9 +318,9 @@ footer a{color:var(--dim)}
 
 <nav>
   <div class="nav-in">
-    <a class="brand" href="#top" aria-label="cat-workflow">
+    <a class="brand" href="#top" aria-label="cat-harness">
       <svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="54" r="34" fill="var(--cat-body)"/><path d="M22 42 L30 12 L48 32 Z" fill="var(--cat-body)"/><path d="M78 42 L70 12 L52 32 Z" fill="var(--cat-body)"/><circle cx="38" cy="52" r="8" fill="var(--cat-face)"/><circle cx="62" cy="52" r="8" fill="var(--cat-face)"/><circle cx="38" cy="52" r="3.6" fill="#05070c"/><circle cx="62" cy="52" r="3.6" fill="#05070c"/><path d="M46 64 L54 64 L50 69 Z" fill="var(--amber)"/></svg>
-      cat-workflow
+      cat-harness
     </a>
     <div class="nav-links">
       <a href="#credo" data-i18n="nav.philosophy">철학</a>
@@ -331,7 +331,7 @@ footer a{color:var(--dim)}
       <div class="lang" role="group" aria-label="Language">
         <button data-lang="ko" class="on">KO</button><button data-lang="en">EN</button>
       </div>
-      <a href="https://github.com/chussum/cat-workflow" target="_blank" rel="noopener" class="gh">GitHub</a>
+      <a href="https://github.com/chussum/cat-harness" target="_blank" rel="noopener" class="gh">GitHub</a>
     </div>
   </div>
 </nav>
@@ -343,10 +343,10 @@ footer a{color:var(--dim)}
       <div class="qbubble" aria-hidden="true">?</div>
     </div>
     <h1 data-i18n-html="hero.h1">추측하기 전에,<br><em>묻습니다.</em></h1>
-    <p class="sub" data-i18n="hero.sub">cat-workflow는 Claude Code 위에서 도는 워크플로 하네스입니다. 모호한 요청은 인터뷰로 좁히고, 계획은 합의로 검증하고, 완료는 증거로 남깁니다. 슬래시 명령 없이, 알아서.</p>
+    <p class="sub" data-i18n="hero.sub">cat-harness는 Claude Code 위에서 도는 워크플로 하네스입니다. 모호한 요청은 인터뷰로 좁히고, 계획은 합의로 검증하고, 완료는 증거로 남깁니다. 슬래시 명령 없이, 알아서.</p>
     <div class="cta-row">
       <div class="install-pill mono">
-        <span class="cmd" id="heroCmd">/plugin marketplace add chussum/cat-workflow</span>
+        <span class="cmd" id="heroCmd">/plugin marketplace add chussum/cat-harness</span>
         <button class="copy-btn" data-copy="#heroCmd" data-i18n="btn.copy">복사</button>
       </div>
       <a class="ghost-btn" href="#demo" data-i18n="hero.cta">인터뷰 받아보기</a>
@@ -512,12 +512,12 @@ G001 <span class="ok">✓ complete</span> — <span class="s" data-i18n="ev.tail
     <div class="term rv">
       <div class="term-bar"><i></i><i></i><i></i></div>
       <div class="term-body mono">
-        <div class="tline"><code id="c1">/plugin marketplace add chussum/cat-workflow</code><button class="copy-btn" data-copy="#c1" data-i18n="btn.copy">복사</button></div>
-        <div class="tline"><code id="c2">/plugin install cat-workflow@cat-workflow</code><button class="copy-btn" data-copy="#c2" data-i18n="btn.copy">복사</button></div>
+        <div class="tline"><code id="c1">/plugin marketplace add chussum/cat-harness</code><button class="copy-btn" data-copy="#c1" data-i18n="btn.copy">복사</button></div>
+        <div class="tline"><code id="c2">/plugin install cat-harness@cat-harness</code><button class="copy-btn" data-copy="#c2" data-i18n="btn.copy">복사</button></div>
         <div class="tline"><code id="c3">/reload-plugins</code><button class="copy-btn" data-copy="#c3" data-i18n="btn.copy">복사</button></div>
       </div>
     </div>
-    <p class="req rv" data-i18n-html="ins.req">급할 땐 <span class="mono">!</span> 또는 <span class="mono">force:</span> 접두사로 그 턴만 게이트를 건너뛸 수 있습니다. 수동 진입: <span class="mono">/cat-workflow:interview · :plan · :execute · :team</span></p>
+    <p class="req rv" data-i18n-html="ins.req">급할 땐 <span class="mono">!</span> 또는 <span class="mono">force:</span> 접두사로 그 턴만 게이트를 건너뛸 수 있습니다. 수동 진입: <span class="mono">/cat-harness:interview · :plan · :execute · :team</span></p>
   </div>
 </section>
 
@@ -525,7 +525,7 @@ G001 <span class="ok">✓ complete</span> — <span class="s" data-i18n="ev.tail
   <div class="paw">
     <svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="54" r="34" fill="var(--cat-body)"/><path d="M22 42 L30 12 L48 32 Z" fill="var(--cat-body)"/><path d="M78 42 L70 12 L52 32 Z" fill="var(--cat-body)"/><path d="M32 52 q6 7 12 0" stroke="var(--cat-face)" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M56 52 q6 7 12 0" stroke="var(--cat-face)" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M46 64 L54 64 L50 69 Z" fill="var(--amber)"/></svg>
   </div>
-  <p data-i18n-html="ft.credit">cat-workflow · MIT License · <a href="https://github.com/Yeachan-Heo/gajae-code" target="_blank" rel="noopener">gajae-code</a>의 철학에서 출발했습니다</p>
+  <p data-i18n-html="ft.credit">cat-harness · MIT License · <a href="https://github.com/Yeachan-Heo/gajae-code" target="_blank" rel="noopener">gajae-code</a>의 철학에서 출발했습니다</p>
   <p style="margin-top:6px" data-i18n="ft.query">쿼리가 이 페이지의 완료도 검증했습니다 🐾</p>
 </footer>
 
@@ -537,7 +537,7 @@ const EN = {
   'nav.philosophy':'Philosophy','nav.how':'How it works','nav.demo':'Interview demo','nav.agents':'Agents','nav.install':'Install',
   'btn.copy':'Copy','btn.copied':'Copied ✓',
   'hero.h1':'Before building,<br><em>it asks.</em>',
-  'hero.sub':'cat-workflow is a workflow harness that runs on top of Claude Code. Vague requests get interviewed, plans get reviewed to consensus, and completion leaves evidence. No slash commands — it routes on its own.',
+  'hero.sub':'cat-harness is a workflow harness that runs on top of Claude Code. Vague requests get interviewed, plans get reviewed to consensus, and completion leaves evidence. No slash commands — it routes on its own.',
   'hero.cta':'Try the interview',
   'hero.homage':'<b>Query</b>, the mascot, won\'t move until ambiguity drops below 5%',
   'credo.h2':'Four promises',
@@ -573,8 +573,8 @@ const EN = {
   'dqa.fbar':'<b>Figma</b> · expected','dqa.ibar':'<b>Impl</b> · measured',
   'ins.h2':'One minute is enough',
   'ins.lede':'All you need is Node.js 18+. After installing, just ask as usual — the router picks the workflow.',
-  'ins.req':'In a hurry? Prefix a prompt with <span class="mono">!</span> or <span class="mono">force:</span> to skip the gate for that turn. Manual entry: <span class="mono">/cat-workflow:interview · :plan · :execute · :team</span>',
-  'ft.credit':'cat-workflow · MIT License · born from the philosophy of <a href="https://github.com/Yeachan-Heo/gajae-code" target="_blank" rel="noopener">gajae-code</a>',
+  'ins.req':'In a hurry? Prefix a prompt with <span class="mono">!</span> or <span class="mono">force:</span> to skip the gate for that turn. Manual entry: <span class="mono">/cat-harness:interview · :plan · :execute · :team</span>',
+  'ft.credit':'cat-harness · MIT License · born from the philosophy of <a href="https://github.com/Yeachan-Heo/gajae-code" target="_blank" rel="noopener">gajae-code</a>',
   'ft.query':'Query verified this page\'s completion, too 🐾',
 };
 

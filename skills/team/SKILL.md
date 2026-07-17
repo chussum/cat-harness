@@ -13,7 +13,7 @@ phase computed from evidence, never from optimism.
 ## State plumbing
 
 - Resolve the session id, state root (`.cat/_session-{sid}`), and helper script path from the
-  `<cat-workflow-router>` context block; fall back to
+  `<cat-harness-router>` context block; fall back to
   `${CLAUDE_PLUGIN_ROOT}/scripts/cat-state.mjs`. Below, `$CAT` means that script path and every
   invocation takes `--session <sid>`.
 - Ensure the session tree exists: `node "$CAT" init --session <sid>`.
@@ -53,7 +53,7 @@ dependency between them, each verifiable on its own.
 
 - **3+ independent lanes** → team is justified; continue.
 - **Fewer** → exit this skill without creating team state. Delegate the work to a single
-  `executor` subagent (Agent tool, `subagent_type: cat-workflow:executor`) — or handle a trivial
+  `executor` subagent (Agent tool, `subagent_type: cat-harness:executor`) — or handle a trivial
   reversible op directly — and tell the user in one line
   why single-lane was chosen. Use native single-subagent fan-out for bounded parallelism the
   leader can await without shared board state.
@@ -69,7 +69,7 @@ Require a grounded context snapshot before launch:
    `.cat/_session-{sid}/specs/deep-interview-*.md`. Never execute from an artifact still marked
    `pending-approval` without the user's explicit approval.
 4. If intent, scope, or acceptance criteria remain ambiguous, do NOT start team state — invoke
-   `cat-workflow:deep-interview` first (the chain guard forbids switching skills mid-run, so
+   `cat-harness:deep-interview` first (the chain guard forbids switching skills mid-run, so
    route before initializing team).
 
 Do not spawn workers until this gate is satisfied. If the user forces a fast launch, state the
@@ -107,14 +107,14 @@ Write the seeded board (phase `starting`), then advance the phase to `running` v
 
 ## Spawn workers
 
-Spawn one `executor` subagent per lane (Agent tool, `subagent_type: cat-workflow:executor`), all
+Spawn one `executor` subagent per lane (Agent tool, `subagent_type: cat-harness:executor`), all
 in parallel in a single message. Each assignment must contain:
 
 1. The lane section verbatim (its scope, file surface, and expected outcome) — never the whole
    team brief as the task.
 2. Its board task id and owner (`task-1`, `worker-1`).
 3. The boundary: "Work only inside your lane's file surface; do not modify other lanes' files;
-   never write `.cat/**` state; never invoke cat-workflow skills."
+   never write `.cat/**` state; never invoke cat-harness skills."
 4. The completion_evidence requirement and schema (below), and that the lane owns its own
    verification.
 5. Receipt-only return contract: changed_files, decisions, verification, evidence
@@ -210,7 +210,7 @@ with the blockers.
 
 ## Handoff and the ultragoal bridge
 
-Team has no `handoff` phase: chain to another cat-workflow skill only AFTER writing a terminal
+Team has no `handoff` phase: chain to another cat-harness skill only AFTER writing a terminal
 phase (the chain guard blocks skill switches mid-run). If the user wants to continue into
 ralplan/ultragoal, terminalize first, then invoke the next skill.
 

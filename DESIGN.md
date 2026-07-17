@@ -1,4 +1,4 @@
-# cat-workflow — Design Contract
+# cat-harness — Design Contract
 
 Claude Code plugin porting gajae-code's workflow philosophy:
 **Interview before guessing / Plan before mutation / Execute with evidence / Parallelize when useful.**
@@ -19,7 +19,7 @@ come from the gajae-code sources (see "Fidelity sources" at the bottom).
 - **4 agents**: `planner`, `architect`, `critic`, `executor`
 - **3 hook events**: `UserPromptSubmit` (router), `PreToolUse` (mutation guard), `Stop` (completion gate)
 - **1 sanctioned state writer**: `scripts/cat-state.mjs`
-- **4 thin commands** (manual escape hatch): `/cat-workflow:interview|plan|execute|team`
+- **4 thin commands** (manual escape hatch): `/cat-harness:interview|plan|execute|team`
 
 Lateral-panel personas (researcher / contrarian / simplifier) are prompt fragments inside the
 deep-interview skill run as generic subagents — NOT plugin agents (keeps the 4-agent surface).
@@ -27,10 +27,10 @@ deep-interview skill run as generic subagents — NOT plugin agents (keeps the 4
 ## 2. File tree
 
 ```
-cat-workflow/
+cat-harness/
 ├── .claude-plugin/
-│   ├── plugin.json               # name "cat-workflow", version 0.1.0. Do NOT reference hooks here.
-│   └── marketplace.json          # marketplace name "cat-workflow", owner chussum, source "./"
+│   ├── plugin.json               # name "cat-harness", version 0.1.0. Do NOT reference hooks here.
+│   └── marketplace.json          # marketplace name "cat-harness", owner chussum, source "./"
 ├── hooks/
 │   ├── hooks.json                # UserPromptSubmit / PreToolUse (Edit|MultiEdit|Write|NotebookEdit|Bash|Skill) / Stop
 │   └── cat-hook.mjs              # single entry: node cat-hook.mjs <router|pretool|stop>
@@ -187,29 +187,29 @@ Always exit 0 with JSON `{hookSpecificOutput:{hookEventName:"UserPromptSubmit", 
 additionalContext = bounded block (≤4 KiB, Tier-1 discipline):
 
 ```
-<cat-workflow-router>
+<cat-harness-router>
 state_root: .cat/_session-{sid} | helper: node "{PLUGIN_ROOT}/scripts/cat-state.mjs"
 active: none | "{skill} phase={phase} ambiguity={a}/{t} next={hud.nextAction}"   ← stickiness: re-inject EVERY prompt while a run is live
-[keyword: {skill} explicitly requested — invoke skill cat-workflow:{skill} now]   ← only when keyword matched
+[keyword: {skill} explicitly requested — invoke skill cat-harness:{skill} now]   ← only when keyword matched
 [signals: file-path, code-fence, issue-ref | vagueness-cues: "not sure", scope-risk: "migration"]  ← advisory regex hints
 Routing ladder — apply BEFORE acting; choose the smallest sufficient workflow:
 1. Pure question / discussion / trivial reversible op → answer directly, no gating.
-2. Implementation-shaped request with ambiguous intent, scope, or acceptance criteria → invoke cat-workflow:deep-interview.
+2. Implementation-shaped request with ambiguous intent, scope, or acceptance criteria → invoke cat-harness:deep-interview.
 3. Requirements clear but non-trivial architecture/sequencing/verification risk (migration, security,
-   breaking change, data loss, multi-system) → invoke cat-workflow:ralplan.
-4. Clear multi-goal / multi-step execution → invoke cat-workflow:ultragoal.
-5. 3+ independent parallel lanes → invoke cat-workflow:team.
+   breaking change, data loss, multi-system) → invoke cat-harness:ralplan.
+4. Clear multi-goal / multi-step execution → invoke cat-harness:ultragoal.
+5. 3+ independent parallel lanes → invoke cat-harness:team.
 Escapes: prompt prefixed "!" or "force:" bypasses gating this turn. Explicit user workflow choice always wins.
 Never implement from a spec/plan marked pending-approval without the user's explicit approval — "just do it" does not approve.
-</cat-workflow-router>
+</cat-harness-router>
 ```
 
 Keyword table (priority; first match wins, higher number outranks):
 `consensus plan` | `$ralplan` → ralplan (9); `$deep-interview` | `deep interview` | `interview me` |
 `don't assume` → deep-interview (8); `$ultragoal` → ultragoal (8); `$team` | `coordinated team` → team (8).
 There is deliberately NO bare `ultragoal` keyword — only the explicit `$ultragoal` token routes.
-Explicit-`$token` suppression: `$<skill>` / `$cat-workflow:<skill>` tokens are parsed first and win
-outright; any explicit-like `$word` token that is NOT a cat-workflow skill suppresses ALL implicit
+Explicit-`$token` suppression: `$<skill>` / `$cat-harness:<skill>` tokens are parsed first and win
+outright; any explicit-like `$word` token that is NOT a cat-harness skill suppresses ALL implicit
 keyword matching for that prompt (so e.g. `$ralph` never falls through to an implicit match).
 Advisory regex hints (never route on their own): vagueness cues `/not sure|unclear|vague|don't assume|어떻게든|알아서|대충/i`;
 scope-risk `/migration|security|breaking change|data loss|마이그레이션|보안/i`;
@@ -225,7 +225,7 @@ ultragoal `goal-planning`; team `starting`. While blocking:
 - **Bash**: allow read-only commands and any `cat-state.mjs` invocation; deny commands matching write
   patterns (`>`/`>>` redirects, `tee`, `sed -i`, `rm/mv/cp` into non-.cat paths, `python|node|ruby -c/-e`
   containing `open(|writeFile|\.write(`, heredocs writing files, `git apply|patch`).
-- **Skill**: chain guard — deny invoking a DIFFERENT cat-workflow skill while the active one's phase is
+- **Skill**: chain guard — deny invoking a DIFFERENT cat-harness skill while the active one's phase is
   not `handoff` or terminal ("finish or hand off {skill} first"). Same-skill re-invocation allowed.
 G1 protection of `.cat` state files applies even with no active workflow. Corrupt state → fail open (log).
 
@@ -320,8 +320,8 @@ show the working remediation invocation (the exact deactivation `state write` co
 ## 7. Agents (`agents/*.md`, CC frontmatter: name/description/tools/model)
 
 Plugin agents register as `<plugin>:<name>` (verified against live plugin agent listings), so every
-Agent-tool `subagent_type` token in skills is NAMESPACED: `cat-workflow:planner`,
-`cat-workflow:architect`, `cat-workflow:critic`, `cat-workflow:executor` — never the bare name.
+Agent-tool `subagent_type` token in skills is NAMESPACED: `cat-harness:planner`,
+`cat-harness:architect`, `cat-harness:critic`, `cat-harness:executor` — never the bare name.
 
 | agent | tools | model | essence |
 |---|---|---|---|
@@ -338,7 +338,7 @@ orchestrator via artifact paths (see §6), never inline dumps of plan bodies.
 ## 8. Commands (thin escape hatches)
 
 `commands/interview.md|plan.md|execute.md|team.md`: frontmatter description + one imperative line:
-"Invoke skill `cat-workflow:<skill>` now with the user's arguments; follow it exactly."
+"Invoke skill `cat-harness:<skill>` now with the user's arguments; follow it exactly."
 
 ## 9. Conventions
 

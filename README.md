@@ -1,4 +1,4 @@
-# cat-workflow
+# cat-harness
 
 **Interview before guessing. Plan before mutation. Execute with evidence. Parallelize when useful.**
 
@@ -18,7 +18,7 @@ state writer, 4 thin escape-hatch commands. It does not expand casually.
 
 ## 한국어 요약
 
-cat-workflow는 [gajae-code](https://github.com/Yeachan-Heo/gajae-code)의 작업
+cat-harness는 [gajae-code](https://github.com/Yeachan-Heo/gajae-code)의 작업
 철학 — **추측하기 전에 인터뷰하고, 변경하기 전에 계획하고, 증거와 함께 실행하고,
 유용할 때만 병렬화한다** — 를 Claude Code 플러그인으로 이식한 것입니다.
 
@@ -58,12 +58,12 @@ sufficient workflow:
 
 1. Pure question / discussion / trivial reversible op → answer directly, no gating.
 2. Implementation-shaped request with ambiguous intent, scope, or acceptance
-   criteria → `cat-workflow:deep-interview`.
+   criteria → `cat-harness:deep-interview`.
 3. Requirements clear but non-trivial architecture/sequencing/verification risk
    (migration, security, breaking change, data loss, multi-system) →
-   `cat-workflow:ralplan`.
-4. Clear multi-goal / multi-step execution → `cat-workflow:ultragoal`.
-5. 3+ independent parallel lanes → `cat-workflow:team`.
+   `cat-harness:ralplan`.
+4. Clear multi-goal / multi-step execution → `cat-harness:ultragoal`.
+5. 3+ independent parallel lanes → `cat-harness:team`.
 
 **Keywords** hard-route (first match wins; higher priority outranks):
 
@@ -101,7 +101,7 @@ While a planning phase is active (deep-interview `interviewing`; ralplan
 team `starting`), file-mutation tools are denied outside `.cat/`, Bash is
 restricted to read-only commands and `cat-state.mjs` invocations (write-shaped
 commands — redirects, `tee`, `sed -i`, interpreter one-liners that write files,
-`git apply` — are denied), and chaining into a different cat-workflow skill is
+`git apply` — are denied), and chaining into a different cat-harness skill is
 denied until the active one reaches `handoff` or a terminal phase. Runtime-owned
 state files (`state/**`, `goals.json`, `ledger.jsonl`, `index.jsonl`) are denied
 to mutation tools **always**, active workflow or not — they may only be written
@@ -250,12 +250,12 @@ between projects; it is the audit trail while work is in flight.
 ## Install
 
 ```
-/plugin marketplace add chussum/cat-workflow
-/plugin install cat-workflow@cat-workflow
+/plugin marketplace add chussum/cat-harness
+/plugin install cat-harness@cat-harness
 ```
 
 Installing from a local clone works the same way — pass the directory path
-instead of the GitHub slug: `/plugin marketplace add /path/to/cat-workflow`.
+instead of the GitHub slug: `/plugin marketplace add /path/to/cat-harness`.
 
 Then restart Claude Code so the hooks register.
 
@@ -265,10 +265,10 @@ Auto-routing means you rarely need these; they exist as thin escape hatches:
 
 | command | invokes |
 |---|---|
-| `/cat-workflow:interview` | `cat-workflow:deep-interview` |
-| `/cat-workflow:plan` | `cat-workflow:ralplan` |
-| `/cat-workflow:execute` | `cat-workflow:ultragoal` |
-| `/cat-workflow:team` | `cat-workflow:team` |
+| `/cat-harness:interview` | `cat-harness:deep-interview` |
+| `/cat-harness:plan` | `cat-harness:ralplan` |
+| `/cat-harness:execute` | `cat-harness:ultragoal` |
+| `/cat-harness:team` | `cat-harness:team` |
 
 ## Configuration
 

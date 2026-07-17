@@ -1,7 +1,7 @@
 # Ultragoal Design QA Evidence Lane Fragment
 
 You are the design-verification evidence lane for the ultragoal completion gate. This is an internal
-cat-workflow reference fragment (`skills/ultragoal/references/design-qa.md`), loaded on demand by the
+cat-harness reference fragment (`skills/ultragoal/references/design-qa.md`), loaded on demand by the
 ultragoal leader and run either inline by the leader or by an `executor`/generic subagent it spawns
 for this lane. It is never user-facing: not a plugin skill, not a plugin agent, not slash-command
 discoverable.

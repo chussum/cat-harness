@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * cat-workflow runtime hook — single entry point for all three hook events.
+ * cat-harness runtime hook — single entry point for all three hook events.
  *
  *   node cat-hook.mjs router    UserPromptSubmit -> inject routing context (always exit 0)
  *   node cat-hook.mjs pretool   PreToolUse       -> mutation guard + G1 state protection + chain guard
@@ -457,13 +457,13 @@ const KEYWORD_PATTERNS = KEYWORD_DEFINITIONS.map(definition => ({
  * keywords; sort priority desc, keyword length desc, alphabetical.
  */
 function detectPrimarySkillKeyword(text) {
-  const explicitPattern = /\$((?:cat-workflow:)?[a-z][a-z0-9-]*)/gi;
+  const explicitPattern = /\$((?:cat-harness:)?[a-z][a-z0-9-]*)/gi;
   let sawExplicitLike = false;
   let explicitMatch = null;
   for (const match of text.matchAll(explicitPattern)) {
     sawExplicitLike = true;
     const token = (match[1] ?? "").toLowerCase();
-    const normalized = token.startsWith("cat-workflow:") ? token.slice("cat-workflow:".length) : token;
+    const normalized = token.startsWith("cat-harness:") ? token.slice("cat-harness:".length) : token;
     if (SKILLS.includes(normalized) && !explicitMatch) {
       explicitMatch = { keyword: match[0], skill: normalized };
     }
@@ -526,10 +526,10 @@ function activeDescriptor(entries) {
 const ROUTER_LADDER = [
   "Routing ladder — apply BEFORE acting; choose the smallest sufficient workflow:",
   "1. Pure question / discussion / trivial reversible op → answer directly, no gating.",
-  "2. Implementation-shaped request with ambiguous intent, scope, or acceptance criteria → invoke cat-workflow:deep-interview.",
-  "3. Requirements clear but non-trivial architecture/sequencing/verification risk (migration, security, breaking change, data loss, multi-system) → invoke cat-workflow:ralplan.",
-  "4. Clear multi-goal / multi-step execution → invoke cat-workflow:ultragoal.",
-  "5. 3+ independent parallel lanes → invoke cat-workflow:team.",
+  "2. Implementation-shaped request with ambiguous intent, scope, or acceptance criteria → invoke cat-harness:deep-interview.",
+  "3. Requirements clear but non-trivial architecture/sequencing/verification risk (migration, security, breaking change, data loss, multi-system) → invoke cat-harness:ralplan.",
+  "4. Clear multi-goal / multi-step execution → invoke cat-harness:ultragoal.",
+  "5. 3+ independent parallel lanes → invoke cat-harness:team.",
   'Escapes: prompt prefixed "!" or "force:" bypasses gating this turn. Explicit user workflow choice always wins.',
   'Never implement from a spec/plan marked pending-approval without the user\'s explicit approval — "just do it" does not approve.',
   "User-facing language: mirror the user's language in every question, progress update, result, and spec/plan body; state JSON stays English.",
@@ -552,7 +552,7 @@ function buildRouterBlock(input) {
   const prompt = input && typeof input.prompt === "string" ? input.prompt : "";
   const keywordMatch = prompt ? detectPrimarySkillKeyword(prompt) : null;
   if (keywordMatch) {
-    lines.push(`[keyword: ${keywordMatch.skill} explicitly requested — invoke skill cat-workflow:${keywordMatch.skill} now]`);
+    lines.push(`[keyword: ${keywordMatch.skill} explicitly requested — invoke skill cat-harness:${keywordMatch.skill} now]`);
   }
 
   if (prompt) {
@@ -569,14 +569,14 @@ function buildRouterBlock(input) {
   }
 
   lines.push(...ROUTER_LADDER);
-  let block = `<cat-workflow-router>\n${lines.join("\n")}\n</cat-workflow-router>`;
+  let block = `<cat-harness-router>\n${lines.join("\n")}\n</cat-harness-router>`;
   if (Buffer.byteLength(block, "utf8") > ROUTER_BLOCK_LIMIT) {
     // D5: enforce the 4 KiB bound in BYTES on a clean UTF-8 boundary.
     const head = Buffer.from(block, "utf8")
       .subarray(0, ROUTER_BLOCK_LIMIT - 32)
       .toString("utf8")
       .replace(/\uFFFD+$/, "");
-    block = `${head}\n</cat-workflow-router>`;
+    block = `${head}\n</cat-harness-router>`;
   }
   return block;
 }
@@ -587,7 +587,7 @@ function runRouter(input) {
     block = buildRouterBlock(input);
   } catch (error) {
     warn(`router degraded: ${error && error.message ? error.message : error}`);
-    block = `<cat-workflow-router>\n${ROUTER_LADDER.join("\n")}\n</cat-workflow-router>`;
+    block = `<cat-harness-router>\n${ROUTER_LADDER.join("\n")}\n</cat-harness-router>`;
   }
   emit({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block } });
   process.exit(0);
@@ -667,8 +667,8 @@ function getBlockingSkill(dir) {
 function runSkillChainGuard(input, dir) {
   const toolInput = input.tool_input && typeof input.tool_input === "object" ? input.tool_input : {};
   const rawSkill = String(toolInput.skill ?? toolInput.name ?? "").trim().replace(/^\//, "");
-  const normalized = rawSkill.toLowerCase().startsWith("cat-workflow:")
-    ? rawSkill.slice("cat-workflow:".length).toLowerCase()
+  const normalized = rawSkill.toLowerCase().startsWith("cat-harness:")
+    ? rawSkill.slice("cat-harness:".length).toLowerCase()
     : rawSkill.toLowerCase();
   if (!SKILLS.includes(normalized)) process.exit(0);
   if (!dir) process.exit(0);
@@ -684,8 +684,8 @@ function runSkillChainGuard(input, dir) {
   if (phase === "handoff" || STOP_RELEASING_PHASES.includes(phase)) process.exit(0);
   denyPretool(
     dir,
-    `cat-workflow chain guard: finish or hand off ${current.skill} first (phase=${phase}) before invoking ` +
-      `cat-workflow:${normalized}. Set current_phase to "handoff" via cat-state.mjs state write, or clear the ` +
+    `cat-harness chain guard: finish or hand off ${current.skill} first (phase=${phase}) before invoking ` +
+      `cat-harness:${normalized}. Set current_phase to "handoff" via cat-state.mjs state write, or clear the ` +
       "run via cat-state.mjs state clear.",
     { tool: "Skill", kind: "chain-guard", skill: current.skill, phase, target: normalized },
   );
@@ -945,7 +945,7 @@ function blockWithNudgeBudget(dir, entry, phase, reason) {
     warn(`stop nudge persist failed: ${error && error.message ? error.message : error}`);
   }
   auditAppend(dir, { event: "stop_nudge", skill: entry.skill, phase, stop_nudges: next });
-  blockStop(`cat-workflow Stop gate (nudge ${next}/${STOP_NUDGE_BUDGET}): ${reason}`);
+  blockStop(`cat-harness Stop gate (nudge ${next}/${STOP_NUDGE_BUDGET}): ${reason}`);
   return true;
 }
 
@@ -975,7 +975,7 @@ function runStop(input) {
       }
       auditAppend(dir, { event: "stop_block_missing_state", skill, path: entry.file });
       blockStop(
-        `cat-workflow Stop gate: ${skill} state at ${entry.file} is missing or corrupt while the session shows ` +
+        `cat-harness Stop gate: ${skill} state at ${entry.file} is missing or corrupt while the session shows ` +
           "an active run (fail-closed). Inspect via cat-state.mjs state read, then finish the handoff or clear " +
           `it (cat-state.mjs state clear --skill ${skill}) only with user confirmation.`,
       );
@@ -990,7 +990,7 @@ function runStop(input) {
       }
       auditAppend(dir, { event: "stop_block_corrupt_state", skill, path: entry.file });
       blockStop(
-        `cat-workflow Stop gate: ${skill} state at ${entry.file} is missing or corrupt while the session shows ` +
+        `cat-harness Stop gate: ${skill} state at ${entry.file} is missing or corrupt while the session shows ` +
           "an active run (fail-closed). Inspect via cat-state.mjs state read, then finish the handoff or clear " +
           `it (cat-state.mjs state clear --skill ${skill}) only with user confirmation.`,
       );
@@ -1044,7 +1044,7 @@ main().catch(error => {
       emit({
         hookSpecificOutput: {
           hookEventName: "UserPromptSubmit",
-          additionalContext: `<cat-workflow-router>\n${ROUTER_LADDER.join("\n")}\n</cat-workflow-router>`,
+          additionalContext: `<cat-harness-router>\n${ROUTER_LADDER.join("\n")}\n</cat-harness-router>`,
         },
       });
     } catch {

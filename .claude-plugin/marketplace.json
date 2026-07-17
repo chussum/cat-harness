@@ -1,11 +1,11 @@
 {
-  "name": "cat-workflow",
+  "name": "cat-harness",
   "owner": {
     "name": "chussum"
   },
   "plugins": [
     {
-      "name": "cat-workflow",
+      "name": "cat-harness",
       "source": "./",
       "version": "0.1.0",
       "description": "Auto-gating interview→plan→execute workflow harness inspired by gajae-code"
