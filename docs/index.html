@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cat-workflow — 추측하기 전에, 묻습니다</title>
+<meta name="description" content="Claude Code 위에서 도는 워크플로 하네스. 모호한 요청은 인터뷰로 정리하고, 계획은 합의로 검증하고, 완료는 증거로 증명합니다.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='54' r='34' fill='%23242b37'/%3E%3Cpath d='M22 42 L30 12 L48 32 Z' fill='%23242b37'/%3E%3Cpath d='M78 42 L70 12 L52 32 Z' fill='%23242b37'/%3E%3Ccircle cx='38' cy='52' r='8' fill='%23f2f5f9'/%3E%3Ccircle cx='62' cy='52' r='8' fill='%23f2f5f9'/%3E%3Ccircle cx='38' cy='52' r='3.6' fill='%2305070c'/%3E%3Ccircle cx='62' cy='52' r='3.6' fill='%2305070c'/%3E%3Cpath d='M46 64 L54 64 L50 69 Z' fill='%23f5a623'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#05070c; --field:#080b11; --surface:#0c1017; --raised:#11161f;
+  --ink:#f2f5f9; --mist:#8b94a3; --dim:#565e6b;
+  --hair:rgba(255,255,255,.07); --hair2:rgba(255,255,255,.12);
+  --amber:#f5a623; --amber-soft:rgba(245,166,35,.13); --amber-line:rgba(245,166,35,.35);
+  --blue:#59a6ff; --blue-soft:rgba(89,166,255,.14);
+  --ok:#4cd97b; --bad:#ff5d5d; --bad-soft:rgba(255,93,93,.14);
+  --cat-body:#242b37; --cat-face:#f2f5f9; --cat-detail:#0c1017;
+  --disp:"Space Grotesk",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  --radius:18px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;background:var(--void)}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Segoe UI","Malgun Gothic",sans-serif;
+  background:var(--void); color:var(--ink);
+  -webkit-font-smoothing:antialiased; line-height:1.65; overflow-x:hidden;
+}
+::selection{background:var(--amber); color:#05070c}
+a{color:inherit}
+.mono{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace}
+.wrap{max-width:1020px;margin:0 auto;padding:0 22px}
+.eyebrow{
+  font-family:var(--disp);font-size:12px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--amber);margin-bottom:16px;
+}
+h2{font-family:var(--disp);font-size:clamp(30px,4.8vw,46px);font-weight:700;letter-spacing:-.025em;line-height:1.18}
+.lede{font-size:clamp(15.5px,2vw,18px);color:var(--mist);max-width:620px;margin-top:16px}
+section{padding:clamp(76px,11vw,136px) 0;position:relative}
+.hairline-top{border-top:1px solid var(--hair)}
+
+/* ---------- reveal ---------- */
+html.js .rv{opacity:0;transform:translateY(24px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+html.js .rv.on{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){
+  html.js .rv{opacity:1;transform:none;transition:none}
+  *{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}
+  html{scroll-behavior:auto}
+}
+
+/* ---------- nav ---------- */
+nav{
+  position:fixed;inset:0 0 auto 0;z-index:50;
+  background:rgba(5,7,12,.72);backdrop-filter:saturate(160%) blur(18px);-webkit-backdrop-filter:saturate(160%) blur(18px);
+  border-bottom:1px solid var(--hair);
+}
+.nav-in{max-width:1020px;margin:0 auto;padding:0 22px;height:56px;display:flex;align-items:center;gap:26px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--disp);font-weight:700;letter-spacing:-.02em;font-size:15.5px;text-decoration:none}
+.brand svg{width:25px;height:25px}
+.nav-links{display:flex;gap:24px;margin-left:auto;align-items:center}
+.nav-links a{font-size:13px;color:var(--mist);text-decoration:none;transition:color .2s}
+.nav-links a:hover{color:var(--ink)}
+.nav-links a.gh{
+  border:1px solid var(--hair2);border-radius:999px;padding:6px 14px;color:var(--ink);
+  display:flex;align-items:center;gap:7px;transition:border-color .2s,background .2s;
+}
+.nav-links a.gh:hover{border-color:var(--amber-line);background:var(--amber-soft)}
+@media(max-width:680px){.nav-links a:not(.keep):not(.gh){display:none}}
+
+/* ---------- hero ---------- */
+.hero{padding:clamp(130px,16vw,200px) 0 clamp(76px,9vw,120px);text-align:center;position:relative;overflow:hidden}
+.hero::before{
+  content:"";position:absolute;inset:-20% -10% auto;height:80%;pointer-events:none;
+  background:
+    radial-gradient(46% 38% at 50% 42%, rgba(245,166,35,.10), transparent 70%),
+    radial-gradient(34% 30% at 62% 30%, rgba(89,166,255,.08), transparent 70%);
+}
+.hero .wrap{position:relative}
+.orbit-stage{position:relative;width:clamp(210px,27vw,290px);margin:0 auto}
+.orbit{
+  position:absolute;left:50%;top:52%;width:135%;height:56%;transform:translate(-50%,-50%) rotate(-16deg);
+  border:1px solid rgba(255,255,255,.09);border-radius:50%;pointer-events:none;
+}
+.orbit .sat{position:absolute;width:9px;height:9px;border-radius:50%;top:-4.5px;left:50%}
+.orbit .sat.a{background:var(--amber);box-shadow:0 0 14px 3px rgba(245,166,35,.55)}
+.orbit .sat.b{background:var(--blue);box-shadow:0 0 14px 3px rgba(89,166,255,.5);top:auto;bottom:-4.5px}
+.orbit-spin{position:absolute;inset:0;animation:orbit 12s linear infinite}
+.orbit-spin.rev{animation-direction:reverse;animation-duration:17s}
+@keyframes orbit{to{transform:rotate(360deg)}}
+h1{
+  font-family:var(--disp);font-size:clamp(44px,8.4vw,88px);font-weight:700;letter-spacing:-.03em;line-height:1.07;
+  margin-top:26px;
+}
+h1 em{font-style:normal;color:var(--amber)}
+.hero p.sub{font-size:clamp(16px,2.2vw,20px);color:var(--mist);max-width:640px;margin:26px auto 0}
+.cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:38px}
+.install-pill{
+  display:inline-flex;align-items:center;gap:14px;
+  background:var(--raised);border:1px solid var(--hair2);border-radius:999px;
+  padding:13px 13px 13px 24px;font-size:14px;color:var(--ink);
+}
+.install-pill .cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:56vw;color:var(--ink)}
+.install-pill .cmd::before{content:"$ ";color:var(--amber)}
+.copy-btn{
+  border:0;border-radius:999px;background:var(--amber);color:#05070c;font-weight:700;
+  font-size:13px;padding:9px 18px;cursor:pointer;font-family:inherit;transition:transform .15s,filter .2s;
+}
+.copy-btn:hover{filter:brightness(1.12);transform:scale(1.04)}
+.copy-btn:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+.ghost-btn{
+  display:inline-flex;align-items:center;border:1px solid var(--hair2);border-radius:999px;
+  padding:13px 24px;font-size:14px;color:var(--ink);text-decoration:none;transition:border-color .2s,background .2s;
+}
+.ghost-btn:hover{border-color:var(--blue);background:var(--blue-soft)}
+.hero .homage{margin-top:26px;font-size:12.5px;color:var(--dim)}
+.hero .homage a{color:var(--dim)}
+.hero .homage b{color:var(--mist)}
+
+/* ---------- credo ---------- */
+.credo{background:var(--field)}
+.credo-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:46px}
+@media(max-width:860px){.credo-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:480px){.credo-grid{grid-template-columns:1fr}}
+.credo-item{border:1px solid var(--hair);border-radius:var(--radius);padding:24px 22px;background:var(--surface);transition:border-color .25s,transform .25s}
+.credo-item:hover{border-color:var(--amber-line);transform:translateY(-4px)}
+.credo-item .k{font-size:clamp(17px,2.1vw,20px);font-weight:700;letter-spacing:-.015em;line-height:1.35}
+.credo-item .e{font-family:var(--disp);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-top:10px}
+.credo-item .bar{width:30px;height:3px;border-radius:2px;background:var(--amber);margin-bottom:18px}
+
+/* ---------- pipeline ---------- */
+.stages{display:flex;gap:10px;margin:46px 0 22px;flex-wrap:wrap}
+.stage-btn{
+  flex:1;min-width:150px;text-align:left;border:1px solid var(--hair);background:var(--surface);
+  border-radius:15px;padding:15px 17px;cursor:pointer;font-family:inherit;color:var(--ink);
+  transition:border-color .2s,box-shadow .2s,transform .2s;
+}
+.stage-btn .n{font-family:var(--disp);font-size:10.5px;font-weight:700;letter-spacing:.14em;color:var(--dim)}
+.stage-btn .t{display:block;font-family:var(--disp);font-size:15.5px;font-weight:700;letter-spacing:-.01em;margin-top:4px}
+.stage-btn .g{display:block;font-size:12px;color:var(--mist);margin-top:2px}
+.stage-btn[aria-selected="true"]{border-color:var(--amber);box-shadow:0 0 0 3px var(--amber-soft),0 8px 30px rgba(0,0,0,.4);transform:translateY(-2px)}
+.stage-panel{
+  background:var(--surface);border:1px solid var(--hair);border-radius:var(--radius);
+  padding:clamp(24px,4vw,40px);
+}
+.stage-panel h3{font-family:var(--disp);font-size:clamp(20px,2.8vw,26px);font-weight:700;letter-spacing:-.02em}
+.stage-panel .badge{
+  display:inline-block;font-size:12px;font-weight:700;color:var(--amber);
+  background:var(--amber-soft);border:1px solid var(--amber-line);border-radius:999px;padding:4px 13px;margin-bottom:14px;
+}
+.stage-panel p{color:var(--mist);margin-top:10px;max-width:660px}
+.stage-panel ul{margin:18px 0 0;padding:0;list-style:none;display:grid;gap:9px}
+.stage-panel li{display:flex;gap:11px;font-size:14px;color:#c7cdd6}
+.stage-panel li::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-top:9px}
+.gatecard{
+  margin-top:24px;border:1px solid var(--hair);border-left:3px solid var(--amber);background:var(--raised);
+  border-radius:0 13px 13px 0;padding:13px 18px;font-size:13.5px;color:var(--mist);
+}
+.gatecard b{color:var(--amber)}
+
+/* ---------- demo ---------- */
+.demo-sec{background:var(--field)}
+.demo{
+  margin-top:46px;display:grid;grid-template-columns:300px 1fr;gap:clamp(22px,4vw,52px);
+  background:var(--surface);border:1px solid var(--hair);border-radius:24px;
+  padding:clamp(22px,4vw,44px);align-items:start;
+  box-shadow:0 30px 80px rgba(0,0,0,.45);
+}
+@media(max-width:800px){.demo{grid-template-columns:1fr}.demo-left{display:flex;gap:24px;align-items:center}}
+.demo-cat{width:168px;margin:0 auto}
+@media(max-width:800px){.demo-cat{width:118px;margin:0}}
+.gauge{text-align:center;margin-top:10px;flex:1}
+.gauge .num{font-family:var(--disp);font-size:clamp(44px,6vw,58px);font-weight:700;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums;transition:color .4s}
+.gauge .lab{font-family:var(--disp);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin-top:7px}
+.gauge .track{height:7px;border-radius:4px;background:#242b37;margin-top:15px;position:relative}
+.gauge .fill{height:100%;border-radius:4px;background:var(--amber);width:100%;transition:width .8s cubic-bezier(.2,.7,.2,1),background .4s;box-shadow:0 0 12px rgba(245,166,35,.4)}
+.gauge .thresh{position:absolute;left:5%;top:-5px;bottom:-5px;width:2px;background:var(--ink);opacity:.5}
+.gauge .thresh::after{content:"5%";position:absolute;top:-20px;left:-8px;font-size:10px;font-weight:700;color:var(--dim)}
+.floor-badge{
+  display:none;margin-top:13px;font-size:12px;font-weight:700;color:var(--bad);background:var(--bad-soft);
+  border:1px solid rgba(255,93,93,.4);border-radius:999px;padding:5px 13px;
+}
+.floor-badge.show{display:inline-block;animation:pop .35s cubic-bezier(.2,.7,.3,1.4)}
+@keyframes pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+.demo-right .q-eyebrow{font-family:var(--disp);font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--dim);text-transform:uppercase}
+.demo-right .q{font-size:clamp(18px,2.5vw,23px);font-weight:700;letter-spacing:-.015em;margin-top:9px;min-height:2.4em}
+.opts{display:grid;gap:10px;margin-top:20px}
+.opt{
+  text-align:left;border:1px solid var(--hair2);background:var(--raised);border-radius:14px;
+  padding:14px 18px;font-size:14.5px;cursor:pointer;font-family:inherit;color:var(--ink);
+  transition:border-color .2s,transform .15s,background .2s;
+}
+.opt:hover{border-color:var(--amber);background:var(--amber-soft);transform:translateX(4px)}
+.opt .hint{display:block;font-size:12px;color:var(--dim);margin-top:2px}
+.demo-note{margin-top:18px;font-size:13.5px;color:var(--mist);min-height:3em}
+.demo-note b{color:var(--ink)}
+.demo-note .up{color:var(--bad);font-weight:700}
+.demo-note .down{color:var(--ok);font-weight:700}
+.spec-card{
+  display:none;margin-top:20px;background:var(--raised);border:1px solid var(--hair2);
+  border-radius:14px;padding:18px 20px;font-size:13px;
+}
+.spec-card.show{display:block;animation:pop .4s cubic-bezier(.2,.7,.3,1.2)}
+.spec-card .fname{font-weight:700;color:var(--blue)}
+.spec-card .pending{color:var(--amber);font-weight:700}
+.spec-card .dim{color:var(--mist)}
+.restart{
+  display:none;margin-top:16px;border:0;background:none;color:var(--amber);
+  font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;text-decoration:underline;text-underline-offset:4px;
+}
+.restart.show{display:inline-block}
+
+/* ---------- agents ---------- */
+.agent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:46px}
+@media(max-width:900px){.agent-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:480px){.agent-grid{grid-template-columns:1fr}}
+.agent{
+  background:var(--surface);border:1px solid var(--hair);border-radius:var(--radius);
+  padding:26px 22px;transition:transform .25s cubic-bezier(.2,.7,.2,1),border-color .25s;
+}
+.agent:hover{transform:translateY(-6px);border-color:var(--hair2)}
+.agent .glyph{
+  width:42px;height:42px;border-radius:12px;background:var(--amber-soft);color:var(--amber);
+  border:1px solid var(--amber-line);
+  display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:16px;
+}
+.agent h3{font-family:var(--disp);font-size:16.5px;font-weight:700;letter-spacing:-.01em}
+.agent .ro{font-family:var(--disp);font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.agent p{font-size:13px;color:var(--mist);margin-top:9px}
+.agent .verdicts{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.agent .v{font-size:10.5px;font-weight:700;border:1px solid var(--hair2);border-radius:999px;padding:3px 9px;color:var(--mist)}
+.agent .v.hot{border-color:var(--amber-line);color:var(--amber);background:var(--amber-soft)}
+
+/* ---------- evidence ---------- */
+.evidence{background:var(--field)}
+.receipt{
+  margin-top:46px;background:#03060b;border:1px solid var(--hair2);border-radius:var(--radius);
+  padding:clamp(20px,3.5vw,34px);font-size:12.5px;line-height:1.8;overflow-x:auto;
+  box-shadow:0 30px 80px rgba(0,0,0,.5);
+}
+.receipt .cm{color:var(--dim)}
+.receipt .k{color:var(--blue)}
+.receipt .s{color:var(--amber)}
+.receipt .ok{color:var(--ok);font-weight:700}
+.receipt .hash{color:#b48aff}
+.evidence .caption{margin-top:22px;font-size:13.5px;color:var(--mist);max-width:560px}
+
+/* ---------- design qa ---------- */
+.dqa{display:grid;grid-template-columns:1fr 1fr;gap:clamp(24px,5vw,60px);align-items:center;margin-top:46px}
+@media(max-width:800px){.dqa{grid-template-columns:1fr}}
+.dqa-visual{position:relative;background:var(--surface);border:1px solid var(--hair);border-radius:var(--radius);padding:24px}
+.frames{display:flex;gap:14px}
+.frame{flex:1;border-radius:13px;border:1px solid var(--hair2);overflow:hidden;background:var(--raised)}
+.frame .bar{font-family:var(--disp);font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:8px 11px;color:var(--dim);border-bottom:1px solid var(--hair)}
+.frame.figma .bar b{color:var(--blue)}
+.frame.impl .bar b{color:var(--amber)}
+.frame .cv{padding:16px 14px 20px}
+.sk{border-radius:6px;background:#242b37}
+.frame.figma .btn-sk{height:44px;border-radius:11px;background:var(--blue);opacity:.9;margin-top:14px}
+.frame.impl .btn-sk{height:38px;border-radius:11px;background:var(--amber);opacity:.9;margin-top:14px}
+.gap-tag{
+  position:absolute;right:10px;bottom:54px;background:var(--bad);color:#05070c;font-size:11px;
+  font-weight:800;border-radius:8px;padding:4px 10px;box-shadow:0 6px 22px rgba(255,93,93,.35);
+}
+@media(max-width:800px){.gap-tag{bottom:auto;top:10px}}
+.dqa-copy ul{margin:18px 0 0;padding:0;list-style:none;display:grid;gap:10px}
+.dqa-copy li{display:flex;gap:11px;font-size:14px;color:#c7cdd6}
+.dqa-copy li::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--blue);margin-top:9px}
+
+/* ---------- install ---------- */
+.term{
+  margin-top:42px;background:#03060b;border-radius:var(--radius);overflow:hidden;
+  border:1px solid var(--hair2);box-shadow:0 30px 80px rgba(0,0,0,.5);
+}
+.term-bar{display:flex;gap:7px;padding:13px 16px;border-bottom:1px solid var(--hair)}
+.term-bar i{width:11px;height:11px;border-radius:50%;background:#242b37}
+.term-bar i:first-child{background:#ff5f57}.term-bar i:nth-child(2){background:#febc2e}.term-bar i:nth-child(3){background:#28c840}
+.term-body{padding:22px 22px 26px;display:grid;gap:14px}
+.tline{display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap}
+.tline code{color:var(--ink);font-size:13.5px;word-break:break-all}
+.tline code::before{content:"$ ";color:var(--amber)}
+.req{margin-top:20px;font-size:13.5px;color:var(--mist)}
+.req .mono{color:#c7cdd6}
+
+/* ---------- footer ---------- */
+footer{padding:64px 0 74px;text-align:center;color:var(--dim);font-size:13px;border-top:1px solid var(--hair)}
+footer .paw{width:32px;margin:0 auto 14px;opacity:.9}
+footer a{color:var(--dim)}
+
+/* ---------- mascot ---------- */
+.cat-svg .tail{transform-origin:178px 196px;animation:tail 3.6s ease-in-out infinite}
+@keyframes tail{0%,100%{transform:rotate(0deg)}50%{transform:rotate(9deg)}}
+.cat-svg .lid{transform-origin:center;transform:scaleY(0);transition:transform .09s}
+.cat-svg.blink .lid{transform:scaleY(1)}
+.cat-svg .pupils{transition:transform .12s ease-out}
+.cat-svg .happy-eyes{opacity:0}
+.cat-svg .brow{opacity:0}
+.cat-svg.suspicious .lid{transform:scaleY(.55)}
+.cat-svg.suspicious .brow{opacity:1}
+.cat-svg.happy .happy-eyes{opacity:1}
+.cat-svg.happy .eyeball,.cat-svg.happy .pupils,.cat-svg.happy .lid{opacity:0}
+.qbubble{
+  position:absolute;top:2%;right:8%;z-index:2;background:var(--raised);border:1px solid var(--hair2);
+  border-radius:999px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+  font-family:var(--disp);font-weight:700;color:var(--amber);font-size:19px;
+  box-shadow:0 0 22px rgba(245,166,35,.25);animation:bob 2.8s ease-in-out infinite;
+}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-in">
+    <a class="brand" href="#top" aria-label="cat-workflow 홈">
+      <svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="54" r="34" fill="var(--cat-body)"/><path d="M22 42 L30 12 L48 32 Z" fill="var(--cat-body)"/><path d="M78 42 L70 12 L52 32 Z" fill="var(--cat-body)"/><circle cx="38" cy="52" r="8" fill="var(--cat-face)"/><circle cx="62" cy="52" r="8" fill="var(--cat-face)"/><circle cx="38" cy="52" r="3.6" fill="#05070c"/><circle cx="62" cy="52" r="3.6" fill="#05070c"/><path d="M46 64 L54 64 L50 69 Z" fill="var(--amber)"/></svg>
+      cat-workflow
+    </a>
+    <div class="nav-links">
+      <a href="#credo">철학</a>
+      <a href="#flow">작동 방식</a>
+      <a href="#demo">인터뷰 데모</a>
+      <a href="#agents">에이전트</a>
+      <a href="#install" class="keep">설치</a>
+      <a href="https://github.com/chussum/cat-workflow" target="_blank" rel="noopener" class="gh">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="orbit-stage" id="heroCat">
+      <div class="orbit"><div class="orbit-spin"><span class="sat a"></span></div><div class="orbit-spin rev"><span class="sat b"></span></div></div>
+      <div class="qbubble" aria-hidden="true">?</div>
+    </div>
+    <h1>추측하기 전에,<br><em>묻습니다.</em></h1>
+    <p class="sub">cat-workflow는 Claude Code 위에서 도는 워크플로 하네스입니다.
+    모호한 요청은 인터뷰로 정리하고, 계획은 합의로 검증하고, 완료는 증거로 증명합니다.
+    슬래시 명령 없이, 알아서.</p>
+    <div class="cta-row">
+      <div class="install-pill mono">
+        <span class="cmd" id="heroCmd">/plugin marketplace add chussum/cat-workflow</span>
+        <button class="copy-btn" data-copy="#heroCmd">복사</button>
+      </div>
+      <a class="ghost-btn" href="#demo">인터뷰 체험하기</a>
+    </div>
+    <p class="homage">마스코트 <b>쿼리(Query)</b>는 모호도가 내려올 때까지 움직이지 않습니다 ·
+      <a href="https://github.com/Yeachan-Heo/gajae-code" target="_blank" rel="noopener">gajae-code</a>의 철학에서 출발했습니다</p>
+  </div>
+</header>
+
+<section class="credo hairline-top" id="credo">
+  <div class="wrap">
+    <p class="eyebrow rv">Philosophy</p>
+    <h2 class="rv">네 가지 약속</h2>
+    <div class="credo-grid">
+      <div class="credo-item rv"><div class="bar"></div><div class="k">묻기 전에<br>만들지 않습니다</div><div class="e">Interview before guessing</div></div>
+      <div class="credo-item rv" style="transition-delay:.08s"><div class="bar"></div><div class="k">계획 없이<br>바꾸지 않습니다</div><div class="e">Plan before mutation</div></div>
+      <div class="credo-item rv" style="transition-delay:.16s"><div class="bar"></div><div class="k">증거 없이<br>끝내지 않습니다</div><div class="e">Execute with evidence</div></div>
+      <div class="credo-item rv" style="transition-delay:.24s"><div class="bar"></div><div class="k">필요할 때만<br>병렬화합니다</div><div class="e">Parallelize when useful</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="flow" class="hairline-top">
+  <div class="wrap">
+    <p class="eyebrow rv">How it works</p>
+    <h2 class="rv">모호한 한 줄이<br>검증된 결과가 되기까지</h2>
+    <p class="lede rv">"만들어줘"라고 쓰는 순간 라우터가 요청을 분류합니다.
+    각 단계는 게이트를 통과해야만 다음으로 넘어갑니다.</p>
+
+    <div class="stages rv" role="tablist" aria-label="워크플로 단계">
+      <button class="stage-btn" role="tab" aria-selected="true" data-stage="0">
+        <span class="n">1 · INTERVIEW</span><span class="t">deep-interview</span><span class="g">모호도 ≤ 5%까지 질문</span>
+      </button>
+      <button class="stage-btn" role="tab" aria-selected="false" data-stage="1">
+        <span class="n">2 · PLAN</span><span class="t">ralplan</span><span class="g">아키텍트 × 크리틱 합의</span>
+      </button>
+      <button class="stage-btn" role="tab" aria-selected="false" data-stage="2">
+        <span class="n">3 · EXECUTE</span><span class="t">ultragoal</span><span class="g">증거 없인 완료 없음</span>
+      </button>
+      <button class="stage-btn" role="tab" aria-selected="false" data-stage="3">
+        <span class="n">+ · PARALLEL</span><span class="t">team</span><span class="g">독립 레인 3개 이상일 때만</span>
+      </button>
+    </div>
+
+    <div class="stage-panel rv" id="stagePanel" role="tabpanel" aria-live="polite"></div>
+  </div>
+</section>
+
+<section class="demo-sec hairline-top" id="demo">
+  <div class="wrap">
+    <p class="eyebrow rv">Interactive</p>
+    <h2 class="rv">쿼리에게 인터뷰를 받아보세요</h2>
+    <p class="lede rv">deep-interview의 실제 채점 방식 그대로 — 답할수록 모호도가 내려가지만,
+    앞서 한 말과 충돌하면 <b style="color:var(--ink)">올라갑니다.</b></p>
+
+    <div class="demo rv">
+      <div class="demo-left">
+        <div class="demo-cat" id="demoCat"></div>
+        <div class="gauge">
+          <div class="num" id="gNum">100%</div>
+          <div class="lab">Ambiguity</div>
+          <div class="track"><div class="thresh"></div><div class="fill" id="gFill"></div></div>
+          <span class="floor-badge" id="floorBadge">floor 10% 잠김 — disputed fact</span>
+        </div>
+      </div>
+      <div class="demo-right">
+        <p class="q-eyebrow" id="qEyebrow">요청 — "다크 모드 만들어줘"</p>
+        <p class="q" id="qText"></p>
+        <div class="opts" id="opts"></div>
+        <p class="demo-note" id="note">쿼리는 한 라운드에 하나만 묻습니다. 가장 약한 차원부터.</p>
+        <div class="spec-card" id="specCard">
+          <span class="fname mono">specs/deep-interview-dark-mode.md</span> 생성됨 ·
+          <span class="pending">status: pending-approval</span><br>
+          <span class="dim">스펙은 승인 전까지 절대 실행되지 않습니다. 다음 단계: ralplan(권장) / ultragoal / team</span>
+        </div>
+        <button class="restart" id="restart">처음부터 다시 인터뷰</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="agents" class="hairline-top">
+  <div class="wrap">
+    <p class="eyebrow rv">Agents</p>
+    <h2 class="rv">역할은 넷이면 충분합니다</h2>
+    <p class="lede rv">비싼 에이전트 하나에게 전부 맡기는 대신, 읽기 전용 셋이 감시하고 하나만 씁니다.</p>
+    <div class="agent-grid">
+      <div class="agent rv"><div class="glyph">✎</div><h3>planner</h3><div class="ro">read-only</div>
+        <p>증거에 기반한 계획 초안과 RALPLAN-DR 심의 요약을 작성합니다. 본문 대신 영수증만 반환합니다.</p>
+        <div class="verdicts"><span class="v">Principles</span><span class="v">Options ≥2</span><span class="v">Pre-mortem</span></div></div>
+      <div class="agent rv" style="transition-delay:.07s"><div class="glyph">◈</div><h3>architect</h3><div class="ro">read-only</div>
+        <p>아키텍처·코드 양면에서 계획과 결과를 리뷰합니다. 근거 없는 승인은 없습니다.</p>
+        <div class="verdicts"><span class="v hot">CLEAR</span><span class="v">WATCH</span><span class="v">BLOCK</span><span class="v hot">APPROVE</span></div></div>
+      <div class="agent rv" style="transition-delay:.14s"><div class="glyph">⚖</div><h3>critic</h3><div class="ro">read-only</div>
+        <p>실행자가 추측 없이 따라갈 수 있는 계획인지만 봅니다. 테스트 가능성, 순서, 롤백.</p>
+        <div class="verdicts"><span class="v hot">OKAY</span><span class="v">ITERATE</span><span class="v">REJECT</span></div></div>
+      <div class="agent rv" style="transition-delay:.21s"><div class="glyph">⌘</div><h3>executor</h3><div class="ro">유일한 write 권한</div>
+        <p>승인된 계획만 구현합니다. 작고 되돌릴 수 있는 diff, 모든 주장엔 증거를 붙입니다.</p>
+        <div class="verdicts"><span class="v">small diffs</span><span class="v hot">receipts</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="evidence hairline-top">
+  <div class="wrap">
+    <p class="eyebrow rv">Evidence</p>
+    <h2 class="rv">완료는 주장이 아니라<br>영수증입니다</h2>
+    <p class="lede rv">목표를 "끝났다"고 말하려면 CLI가 품질 게이트를 통과시켜야 합니다.
+    아키텍트 승인, QA 통과, 실물 증거 파일 — 하나라도 없으면 거부됩니다.</p>
+    <div class="receipt mono rv">
+<pre>$ node cat-state.mjs goal checkpoint --goal G001 --status complete --quality-gate-json gate.json
+
+<span class="cm"># fail-closed validation…</span>
+<span class="k">architect_review.verdicts</span>   { architecture: <span class="ok">CLEAR</span>, product: <span class="ok">CLEAR</span>, code: <span class="ok">CLEAR</span> } → <span class="ok">APPROVE</span>
+<span class="k">qa.status</span>                   <span class="ok">passed</span> · commands 4 · artifacts 3 (PNG ✓ ≥4096B ✓)
+<span class="k">design-qa</span>                   Critical 0 · Major 0 · <span class="s">figma export ↔ impl screenshot 대조 완료</span>
+
+<span class="cm"># receipt minted</span>
+<span class="k">plan_generation_sha256</span>      <span class="hash">9f4e2c81…d07a</span>
+<span class="k">ledger_event_id</span>             <span class="hash">a1b2c3d4-…</span> (anchored)
+<span class="k">verified_at</span>                 2026-07-17T07:42:11Z
+
+G001 <span class="ok">✓ complete</span> — 이후 goals.json이 1바이트라도 바뀌면 receipt verify가 실패합니다</pre>
+    </div>
+    <p class="caption rv">스크린샷은 파일 크기와 PNG 매직 바이트까지 검사합니다.
+    Figma 링크가 있으면 디자인 검증 레인이 붙어 computed-style을 수치로 대조합니다.</p>
+  </div>
+</section>
+
+<section id="design-qa" class="hairline-top">
+  <div class="wrap">
+    <p class="eyebrow rv">Design QA</p>
+    <h2 class="rv">Figma 링크 하나면,<br>디자인까지 검증합니다</h2>
+    <div class="dqa">
+      <div class="dqa-copy rv">
+        <p class="lede" style="margin-top:0">UI 목표의 완료 게이트에 디자인 검증 레인이 자동으로 붙습니다.
+        눈대중이 아니라 수치로.</p>
+        <ul>
+          <li>Figma 노드에서 spec 수치 추출 — 간격·색상·타이포를 숫자로</li>
+          <li>디자인 브레이크포인트 그대로 Playwright 캡처 (1:1 원칙)</li>
+          <li>computed-style 실측값과 대조, 심각도 분류</li>
+          <li>Critical/Major 갭은 완료를 차단 — 픽셀 몇 개도 Major는 Major</li>
+        </ul>
+      </div>
+      <div class="dqa-visual rv">
+        <div class="frames">
+          <div class="frame figma"><div class="bar"><b>Figma</b> · 기대</div><div class="cv">
+            <div class="sk" style="height:14px;width:62%"></div>
+            <div class="sk" style="height:9px;width:88%;margin-top:10px"></div>
+            <div class="sk" style="height:9px;width:74%;margin-top:6px"></div>
+            <div class="btn-sk"></div></div></div>
+          <div class="frame impl"><div class="bar"><b>구현</b> · 실측</div><div class="cv">
+            <div class="sk" style="height:14px;width:62%"></div>
+            <div class="sk" style="height:9px;width:88%;margin-top:10px"></div>
+            <div class="sk" style="height:9px;width:74%;margin-top:6px"></div>
+            <div class="btn-sk"></div></div></div>
+        </div>
+        <div class="gap-tag">height 44 ≠ 38 · Major</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install" class="hairline-top">
+  <div class="wrap">
+    <p class="eyebrow rv">Install</p>
+    <h2 class="rv">1분이면 충분합니다</h2>
+    <p class="lede rv">Node.js 18+만 있으면 됩니다. 설치 후엔 그냥 평소처럼 요청하세요 —
+    라우터가 알아서 워크플로를 태웁니다.</p>
+    <div class="term rv">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+      <div class="term-body mono">
+        <div class="tline"><code id="c1">/plugin marketplace add chussum/cat-workflow</code><button class="copy-btn" data-copy="#c1">복사</button></div>
+        <div class="tline"><code id="c2">/plugin install cat-workflow@cat-workflow</code><button class="copy-btn" data-copy="#c2">복사</button></div>
+        <div class="tline"><code id="c3">/reload-plugins</code><button class="copy-btn" data-copy="#c3">복사</button></div>
+      </div>
+    </div>
+    <p class="req rv">급할 땐 <span class="mono">!</span> 또는 <span class="mono">force:</span> 접두사로 그 턴만 게이트를 건너뛸 수 있습니다.
+    수동 진입: <span class="mono">/cat-workflow:interview · :plan · :execute · :team</span></p>
+  </div>
+</section>
+
+<footer>
+  <div class="paw">
+    <svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="54" r="34" fill="var(--cat-body)"/><path d="M22 42 L30 12 L48 32 Z" fill="var(--cat-body)"/><path d="M78 42 L70 12 L52 32 Z" fill="var(--cat-body)"/><path d="M32 52 q6 7 12 0" stroke="var(--cat-face)" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M56 52 q6 7 12 0" stroke="var(--cat-face)" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M46 64 L54 64 L50 69 Z" fill="var(--amber)"/></svg>
+  </div>
+  <p>cat-workflow · MIT License · <a href="https://github.com/Yeachan-Heo/gajae-code" target="_blank" rel="noopener">gajae-code</a>를 벤치마킹했습니다</p>
+  <p style="margin-top:6px">쿼리가 이 페이지의 완료도 검증했습니다 🐾</p>
+</footer>
+
+<script>
+document.documentElement.classList.add('js');
+/* ---------- mascot ---------- */
+function catSVG(p){return `
+<svg class="cat-svg" id="${p}" viewBox="0 0 320 300" role="img" aria-label="마스코트 고양이 쿼리">
+  <g class="tail"><path d="M178 196 q64 14 58 -52 q-3 -26 -26 -30" fill="none" stroke="var(--cat-body)" stroke-width="17" stroke-linecap="round"/></g>
+  <ellipse cx="150" cy="228" rx="84" ry="52" fill="var(--cat-body)"/>
+  <ellipse cx="150" cy="244" rx="46" ry="28" fill="var(--cat-face)"/>
+  <path d="M84 92 L96 24 Q98 16 106 21 L140 58 Z" fill="var(--cat-body)"/>
+  <path d="M95 78 L101 40 L119 60 Z" fill="var(--amber)"/>
+  <path d="M216 92 L204 24 Q202 16 194 21 L160 58 Z" fill="var(--cat-body)"/>
+  <path d="M205 78 L199 40 L181 60 Z" fill="var(--amber)"/>
+  <circle cx="150" cy="128" r="82" fill="var(--cat-body)"/>
+  <g class="brow"><path d="M96 92 L128 102" stroke="var(--cat-face)" stroke-width="5" stroke-linecap="round"/><path d="M204 92 L172 102" stroke="var(--cat-face)" stroke-width="5" stroke-linecap="round"/></g>
+  <circle class="eyeball" cx="118" cy="122" r="19" fill="var(--cat-face)"/>
+  <circle class="eyeball" cx="182" cy="122" r="19" fill="var(--cat-face)"/>
+  <g class="pupils">
+    <circle cx="118" cy="122" r="8.5" fill="#05070c"/><circle cx="121" cy="119" r="2.6" fill="#fff"/>
+    <circle cx="182" cy="122" r="8.5" fill="#05070c"/><circle cx="185" cy="119" r="2.6" fill="#fff"/>
+  </g>
+  <g class="lid"><rect x="97" y="101" width="42" height="42" rx="21" fill="var(--cat-body)"/><rect x="161" y="101" width="42" height="42" rx="21" fill="var(--cat-body)"/></g>
+  <g class="happy-eyes"><path d="M102 122 q16 14 32 0" stroke="var(--cat-face)" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M166 122 q16 14 32 0" stroke="var(--cat-face)" stroke-width="6" fill="none" stroke-linecap="round"/></g>
+  <path d="M143 150 L157 150 L150 159 Z" fill="var(--amber)"/>
+  <path d="M150 159 q0 8 -10 10 M150 159 q0 8 10 10" stroke="var(--cat-face)" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <g stroke="var(--cat-face)" stroke-width="3" stroke-linecap="round" opacity=".7">
+    <path d="M62 138 L94 142"/><path d="M60 154 L93 152"/><path d="M64 170 L95 162"/>
+    <path d="M258 138 L226 142"/><path d="M260 154 L227 152"/><path d="M256 170 L225 162"/>
+  </g>
+  <path d="M110 196 q40 18 80 0" stroke="var(--amber)" stroke-width="11" fill="none" stroke-linecap="round"/>
+  <circle cx="150" cy="207" r="9" fill="#03060b" stroke="var(--amber)" stroke-width="3"/>
+  <text x="150" y="212" text-anchor="middle" font-size="12" font-weight="800" fill="var(--amber)">?</text>
+</svg>`}
+document.getElementById('heroCat').insertAdjacentHTML('beforeend', catSVG('cat1'));
+document.getElementById('demoCat').innerHTML = catSVG('cat2');
+
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* eye tracking (hero cat) */
+const cat1 = document.getElementById('cat1');
+if(!reduced){
+  let raf=null;
+  addEventListener('mousemove', e=>{
+    if(raf) return;
+    raf = requestAnimationFrame(()=>{
+      raf=null;
+      const r = cat1.getBoundingClientRect();
+      const cx=r.left+r.width/2, cy=r.top+r.height*0.42;
+      const dx=(e.clientX-cx)/innerWidth, dy=(e.clientY-cy)/innerHeight;
+      cat1.querySelector('.pupils').style.transform =
+        `translate(${(dx*14).toFixed(1)}px, ${(dy*10).toFixed(1)}px)`;
+    });
+  },{passive:true});
+}
+/* blink */
+if(!reduced){
+  document.querySelectorAll('.cat-svg').forEach(cat=>{
+    (function blink(){
+      const t = 2400+Math.random()*2600;
+      setTimeout(()=>{
+        if(!cat.classList.contains('happy') && !cat.classList.contains('suspicious')){
+          cat.classList.add('blink');
+          setTimeout(()=>cat.classList.remove('blink'),130);
+        }
+        blink();
+      },t);
+    })();
+  });
+}
+
+/* ---------- reveal ---------- */
+const io = new IntersectionObserver(es=>es.forEach(x=>{
+  if(x.isIntersecting){x.target.classList.add('on');io.unobserve(x.target)}
+}),{threshold:.12});
+document.querySelectorAll('.rv').forEach(el=>io.observe(el));
+
+/* ---------- copy ---------- */
+document.querySelectorAll('.copy-btn').forEach(b=>{
+  b.addEventListener('click',()=>{
+    const t = document.querySelector(b.dataset.copy).textContent.trim();
+    navigator.clipboard.writeText(t).then(()=>{
+      const o=b.textContent; b.textContent='복사됨 ✓';
+      setTimeout(()=>b.textContent=o,1400);
+    });
+  });
+});
+
+/* ---------- pipeline ---------- */
+const STAGES=[
+ {badge:'게이트 — ambiguity ≤ threshold (기본 5%)',title:'질문으로 요구사항을 수렴시킵니다',
+  body:'한 라운드에 한 질문, 가장 약한 차원부터. 매 답변마다 Goal·Constraints·Criteria 명확도를 채점해 모호도를 계산합니다. 답변이 기존 사실과 충돌하면 점수는 다시 올라갑니다.',
+  items:['수식: ambiguity = 1 − (goal×0.40 + constraints×0.30 + criteria×0.30)','disputed fact 하나 = floor 10% 고정, 해소 전 수렴 차단','산출물: pending-approval 스펙 문서'],
+  gate:'<b>이 단계에선 코드를 못 씁니다.</b> Edit/Write/Bash 쓰기가 훅 레벨에서 차단됩니다.'},
+ {badge:'게이트 — Critic OKAY ∧ Architect CLEAR+APPROVE',title:'계획은 심사를 통과해야 계획입니다',
+  body:'planner가 초안을 쓰면, 서로를 모르는 architect와 critic이 같은 sha256 아티팩트를 병렬 리뷰합니다. 둘 다 승인할 때까지 최대 5회 반복.',
+  items:['합의 후 루프가 만든 가정을 하나씩 사용자에게 재확인','최종 계획은 pending-approval.md — "그냥 해줘"로는 승인 안 됨','승인 시 ultragoal(기본) 또는 team으로 핸드오프'],
+  gate:'<b>승인은 구조화된 질문에 답해야만.</b> 애매한 동의는 계획을 pending 상태로 남깁니다.'},
+ {badge:'게이트 — 품질게이트 JSON을 CLI가 fail-closed 검증',title:'증거가 쌓여야 완료가 됩니다',
+  body:'브리프를 G001…GNNN 목표로 분해하고 append-only 원장에 모든 상태 변화를 기록합니다. 완료 체크포인트는 아키텍트 승인 + QA 통과 + 실물 아티팩트가 전부 있어야 통과합니다.',
+  items:['스크린샷은 크기·PNG 매직까지 실물 검증','완료 시 sha256 receipt 발행 — 이후 변조되면 verify 실패','막히면 포기 대신 블로커 목표를 새로 만듭니다'],
+  gate:'<b>Figma 링크가 있으면</b> 디자인 검증 레인이 게이트에 추가됩니다.'},
+ {badge:'게이트 — 레인마다 completion evidence 필수',title:'병렬은 목적이 아니라 도구입니다',
+  body:'독립 레인이 3개 이상일 때만. tmux 없이 네이티브 서브에이전트로 레인을 나누고, 리더는 모든 태스크에 증거가 모이기 전까진 성공을 선언할 수 없습니다.',
+  items:['태스크 보드에 레인별 상태 + 완료 증거 기록','종료 상태는 증거로 계산: complete / awaiting_integration / failed','파일 충돌은 워크트리 격리로 회피'],
+  gate:'<b>증거 없는 레인 하나 = 전체 failed.</b> 팀에도 무임승차는 없습니다.'}
+];
+const panel=document.getElementById('stagePanel');
+function renderStage(i){
+  const s=STAGES[i];
+  panel.innerHTML=`<span class="badge">${s.badge}</span><h3>${s.title}</h3><p>${s.body}</p>
+  <ul>${s.items.map(x=>`<li>${x}</li>`).join('')}</ul><div class="gatecard">${s.gate}</div>`;
+  document.querySelectorAll('.stage-btn').forEach((b,j)=>b.setAttribute('aria-selected', j===i?'true':'false'));
+}
+document.querySelectorAll('.stage-btn').forEach(b=>b.addEventListener('click',()=>renderStage(+b.dataset.stage)));
+renderStage(0);
+
+/* ---------- interview demo ---------- */
+const cat2=document.getElementById('cat2');
+const gNum=document.getElementById('gNum'), gFill=document.getElementById('gFill');
+const qText=document.getElementById('qText'), opts=document.getElementById('opts');
+const note=document.getElementById('note'), floorBadge=document.getElementById('floorBadge');
+const specCard=document.getElementById('specCard'), restart=document.getElementById('restart');
+const qEyebrow=document.getElementById('qEyebrow');
+
+let score=100, floor=0, step=0, q2Answer=null;
+
+function setScore(v,colorUp){
+  score=Math.max(v,floor||v);
+  gNum.textContent=Math.round(score)+'%';
+  gFill.style.width=score+'%';
+  const done=score<=5;
+  gNum.style.color = colorUp? 'var(--bad)' : (done? 'var(--ok)':'var(--ink)');
+  gFill.style.background = colorUp? 'var(--bad)' : (done? 'var(--ok)':'var(--amber)');
+  gFill.style.boxShadow = colorUp? '0 0 12px rgba(255,93,93,.45)' : (done? '0 0 12px rgba(76,217,123,.45)':'0 0 12px rgba(245,166,35,.4)');
+}
+function setCat(state){ cat2.classList.remove('suspicious','happy'); if(state) cat2.classList.add(state); }
+function ask(eyebrow,q,options){
+  qEyebrow.textContent=eyebrow; qText.textContent=q;
+  opts.innerHTML='';
+  options.forEach(o=>{
+    const b=document.createElement('button'); b.className='opt';
+    b.innerHTML=o.label+(o.hint?`<span class="hint">${o.hint}</span>`:'');
+    b.addEventListener('click',()=>o.go());
+    opts.appendChild(b);
+  });
+}
+function noteHTML(h){note.innerHTML=h}
+
+function round1(){
+  step=1; setCat(null);
+  ask('Round 1 · 가장 약한 차원: Goal',
+      '다크 모드는 어디까지 적용할까요?',
+      [{label:'앱 전체 화면',hint:'경계가 명확한 답 — goal 명확도 상승',go:()=>{setScore(58);noteHTML('goal 0.9↑ · <span class="down">100% → 58%</span> — 다음은 Criteria 차원이 가장 약합니다');round2();}},
+       {label:'설정 화면에만 우선',hint:'범위가 좁고 구체적',go:()=>{setScore(54);noteHTML('goal 0.92 · <span class="down">100% → 54%</span> — 스코프가 잠겼습니다');round2();}},
+       {label:'음… 알아서 해줘',hint:'evasive answer — 점수가 거의 안 내려감',go:()=>{setScore(88);setCat('suspicious');noteHTML('트리거 C(회피성 답변) · <span class="up">100% → 88%</span> — 쿼리가 같은 차원을 다시 묻습니다');setTimeout(()=>{setCat(null);round1b();},900);}}]);
+}
+function round1b(){
+  ask('Round 1 · 재질문: Goal','조금만 좁혀볼게요. 지금 가장 급한 화면은?',
+      [{label:'전체 — 일관성이 중요해요',go:()=>{setScore(58);noteHTML('goal 확정 · <span class="down">88% → 58%</span>');round2();}},
+       {label:'설정 화면부터',go:()=>{setScore(54);noteHTML('goal 확정 · <span class="down">88% → 54%</span>');round2();}}]);
+}
+function round2(){
+  step=2;
+  ask('Round 2 · 가장 약한 차원: Criteria',
+      '테마 기준은 무엇으로 할까요?',
+      [{label:'시스템 설정을 따라간다',hint:'테스트 가능한 기준',go:()=>{q2Answer='system';setScore(28);noteHTML('criteria 0.9↑ · <span class="down">→ 28%</span> — 마지막으로 Constraints를 확인합니다');round3();}},
+       {label:'토글로 직접 선택 + 저장',hint:'명확한 수용 기준',go:()=>{q2Answer='toggle';setScore(26);noteHTML('criteria 0.92 · <span class="down">→ 26%</span> — 마지막 확인이 남았습니다');round3();}}]);
+}
+function round3(){
+  step=3;
+  ask('Round 3 · Constraints 확인',
+      '제외할 것(non-goal)이 있나요?',
+      [{label:'없음 — 위 기준대로 가자',hint:'수렴 경로',go:finish},
+       {label:'아 잠깐, 그냥 라이트 고정으로 해줘',hint:'⚠ 방금 확정한 사실과 충돌',go:contradict}]);
+}
+function contradict(){
+  floor=10;
+  setScore(48,true); setCat('suspicious');
+  floorBadge.classList.add('show');
+  noteHTML('<b>트리거 A: 직접 모순.</b> "테마 기준" 사실이 <b>disputed</b>로 표시됩니다 · <span class="up">→ 48%</span><br>floor가 10%로 고정 — 이 충돌을 해소하기 전엔 수렴이 <b>수학적으로 불가능</b>합니다');
+  ask('Round 4 · disputed fact 해소',
+      '어느 쪽이 진짜인가요? (사실은 삭제되지 않고, 해소되어야 합니다)',
+      [{label:q2Answer==='system'?'시스템 설정 유지가 맞다 (재확인)':'토글 방식이 맞다 (재확인)',hint:'disputed → false',go:()=>{floor=0;floorBadge.classList.remove('show');setScore(9);noteHTML('사실 재확인 → disputed 해제 · floor 해제 · <span class="down">→ 9%</span>');setCat(null);setTimeout(finishStep,600);}},
+       {label:'라이트 고정이 맞다 — 기존 결정을 대체',hint:'superseded_by 기록',go:()=>{floor=0;floorBadge.classList.remove('show');setScore(11);noteHTML('새 사실이 이전 사실을 <b>supersede</b> · 원본은 이력에 보존 · <span class="down">→ 11%</span>');setCat(null);setTimeout(finishStep,600);}}]);
+}
+function finishStep(){
+  ask('Round 5 · 한 문장 재진술','"이 한 줄만 읽어도 같은 결과가 나올까요?"',
+      [{label:'네, 크리스탈라이즈',go:finish},
+       {label:'문구 조정 (실제로는 한 번 더 질문합니다)',go:finish}]);
+}
+function finish(){
+  setScore(4); setCat('happy');
+  qEyebrow.textContent='Interview complete';
+  qText.textContent='모호도 4% ≤ 임계값 5% — 스펙을 크리스탈라이즈합니다.';
+  opts.innerHTML='';
+  noteHTML('실제 인터뷰는 컴포넌트별 토폴로지, 측면 리뷰 패널, 클로저 감사를 거칩니다. 이건 미리보기일 뿐.');
+  specCard.classList.add('show'); restart.classList.add('show');
+}
+restart.addEventListener('click',()=>{
+  score=100;floor=0;q2Answer=null;
+  setScore(100);setCat(null);
+  floorBadge.classList.remove('show');specCard.classList.remove('show');restart.classList.remove('show');
+  qEyebrow.textContent='요청 — "다크 모드 만들어줘"';
+  noteHTML('쿼리는 한 라운드에 하나만 묻습니다. 가장 약한 차원부터.');
+  round1();
+});
+setScore(100); round1();
+</script>
+</body>
+</html>

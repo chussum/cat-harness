@@ -1,0 +1,4 @@
+.cat/
+.omc/
+.DS_Store
+node_modules/

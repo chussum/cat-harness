@@ -1,0 +1,21 @@
+{
+  "name": "cat-workflow",
+  "version": "0.1.0",
+  "description": "Auto-gating interview→plan→execute workflow harness inspired by gajae-code",
+  "author": {
+    "name": "chussum"
+  },
+  "homepage": "https://chussum.github.io/cat-workflow/",
+  "repository": "https://github.com/chussum/cat-workflow",
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "planning",
+    "interview",
+    "ambiguity-gating",
+    "approval-gate",
+    "agents",
+    "orchestration",
+    "gajae-code"
+  ]
+}
