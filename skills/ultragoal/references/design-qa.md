@@ -66,6 +66,51 @@ goal CANNOT checkpoint `complete` on design grounds. There is no automatic inspe
 Every real fidelity fallback actually used (REST instead of MCP, chrome instead of Playwright,
 screenshots-only) is still recorded as one line in `qa.evidence`.
 
+## Capture-integrity gate — NO verdict without a verified live render (fail closed on capture failure)
+
+The environment check above catches a MISSING capability. This gate catches the sibling hole: the
+capability is connected, but the actual capture **failed, was flaky, or was skipped at runtime** (the
+browser/extension crashed or timed out, navigation never settled, the screenshot came back blank or on
+an error page, the MCP dropped mid-run). A shaky capture is NOT a reason to fall back to the design
+spec and pass — it is a blocker, exactly like a missing capability. This is the exact failure this
+gate exists to stop: *"I had the Figma spec and read the implementation source, the render was hard to
+capture, so I concluded from those."* That is a silent pass, and it is forbidden.
+
+**Two hard rules:**
+1. **A design verdict REQUIRES a real, live implementation render.** Reading the implementation SOURCE
+   CODE, or reasoning from the design spec/numbers alone, is NEVER a substitute for capturing the
+   rendered pixels. Code tells you what was written; only the live capture tells you what the user
+   sees. A `passed` design dimension is impossible without an on-disk, validated, visually-inspected
+   AS-IS render of the actual running component.
+2. **Capture failure ⇒ blocker, never a pass.** If, after the retry protocol below, you still cannot
+   obtain a trustworthy live render, STOP and ask the user via AskUserQuestion (same three outcomes as
+   the environment check: fix/retry the capture path, use claude-in-chrome as an alternate live path,
+   or explicitly waive). Emit a `qa.blockers` entry ("design source provided and capability connected,
+   but the live capture failed/was unreliable (<reason>); render NOT verified — awaiting a working
+   capture or explicit waiver"). Do NOT synthesize a verdict from the design source in the meantime.
+
+**Retry / robustness protocol (before declaring capture failure):**
+- Retry a failed navigate/resize/screenshot up to **3×** — re-navigate, re-open the component
+  (drawer/modal/tab), and wait for load/network-idle before capturing. Browser flakiness is expected;
+  one failed call is not capture failure, three are.
+- Treat as a FAILED capture (not a success), and retry or block accordingly: a navigation timeout, a
+  blank/near-blank screenshot, a screenshot of an error boundary / 404 / loading spinner, an
+  MCP/extension disconnect, or an element screenshot whose target selector was not found.
+- **A ≥4096-byte PNG is necessary but NOT sufficient** — a blank white or error-page PNG easily clears
+  the byte floor. Before listing an implementation screenshot as evidence, confirm it actually shows
+  the intended component (the mapped root selector rendered with content), not a blank/error/loading
+  frame. If unsure it is the real component, it is a failed capture.
+
+**Pre-verdict self-check (all must be TRUE, or the design dimension is a blocker, not a pass):**
+- [ ] I navigated to the live route and the target component actually rendered (not blank / error / loading).
+- [ ] I captured the AS-IS implementation render on disk and confirmed the PNG shows the real component.
+- [ ] I exported the mapped TO-BE Figma frame/node on disk (or used the provided design image in fallback mode).
+- [ ] I opened BOTH images and visually compared them as an AS-IS | TO-BE pair.
+- [ ] Every numeric claim in the findings came from `browser_evaluate` on the LIVE DOM — none from reading source code or from the design guide alone.
+
+If any box is unchecked, the design dimension is `not-verified` and a `qa.blockers` entry is emitted —
+never a `passed`.
+
 ## Step 1 — Extract the design policy (scoped to THIS goal)
 
 Extract only policies that govern the current goal's surfaces — do not map the whole Figma file.
@@ -103,7 +148,10 @@ target the right element:
    e.g. `design-{goal}-{surface}-{bp}.png`. Capture at ≥2x (put `zoom:2` on the target element and
    take an element screenshot with the viewport unchanged) so the image is crisp AND clears the gate's
    4096-byte floor. Verify each saved file is real PNG/JPEG and ≥4096 bytes before listing it — the
-   sanctioned CLI rejects the checkpoint otherwise.
+   sanctioned CLI rejects the checkpoint otherwise. Per the Capture-integrity gate, ALSO confirm the
+   image shows the real rendered component (not a blank / error / loading frame) — a byte count is not
+   proof of a real capture. If the capture fails or looks blank, follow the retry protocol; if it still
+   fails, that is a blocker, not a reason to proceed from the design spec.
 3. Export the matching DESIGN frame image and save it beside the implementation screenshot as
    `design-{goal}-{surface}-{bp}-figma.png`: Figma MCP `get_screenshot` on the mapped node, or REST
    `GET /v1/images/{file_key}?ids={node}&format=png&scale=2`. Export the node in its frame context at
@@ -149,9 +197,15 @@ Return to the leader (do not paste artifact bodies — reference paths):
 - A **one-paragraph `qa.evidence` summary**: design source used, any degradations, counts by severity.
 - The Playwright actions used (navigate/resize/screenshot/evaluate) → `qa.commands`.
 - **Blockers**: every unresolved Critical/Major gap → one `qa.blockers` entry. Minor/Trivial gaps are
-  recorded in the findings table but are NOT blockers and do NOT enter `qa.blockers`.
+  recorded in the findings table but are NOT blockers and do NOT enter `qa.blockers`. A missing
+  capability (environment check) or a failed/unreliable live capture (Capture-integrity gate) is ALSO
+  a `qa.blockers` entry with `qa.status` `not-verified` — the design dimension cannot be `passed` from
+  the design source alone.
 
-Design-dimension `qa.status` is `passed` only when no unresolved Critical/Major gap remains. The leader
+Design-dimension `qa.status` is `passed` only when BOTH: (a) the Capture-integrity gate's pre-verdict
+self-check is fully satisfied (a real live render was captured, both AS-IS/TO-BE images exist and were
+eyeballed, and every number came from the live DOM), AND (b) no unresolved Critical/Major gap remains.
+A capture that failed or was skipped is `not-verified` with a `qa.blockers` entry — never `passed`. The leader
 folds this into the goal's overall quality-gate JSON (`{architect_review, qa:{status, commands,
 evidence, artifacts, blockers}}`) and runs `goal checkpoint --status complete --quality-gate-json`; the
 CLI enforces the gate fail-closed (screenshots must be PNG/JPEG magic and ≥4096 bytes).
