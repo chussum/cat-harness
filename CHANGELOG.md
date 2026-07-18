@@ -1,6 +1,26 @@
 # Changelog
 
-## 0.3.0 — Tycoon dashboard (unreleased, prepared but not pushed/tagged)
+## 0.4.0 — Tycoon dashboard, nested-dialogue attribution, design-QA hardening, ghost-floor fix (2026-07-18)
+
+First tagged release since 0.2.0. Bundles the prepared-but-never-tagged 0.3.0
+dashboard work with the nested sub-agent dialogue feature, two design-QA
+doctrine reinforcements, and the ghost-floor/unregister-feedback fix.
+
+- **Nested sub-agent dialogue attribution (Feature B).** A cat-harness subagent
+  that itself dispatches a subagent (e.g. an `executor` dispatching a `critic`)
+  is attributed to its PARENT, not the generic leader. Live-confirmed the inner
+  `PreToolUse[Agent]` carries the dispatcher's own `agent_type`; the hook threads
+  it as the optional `parent_agent_type` (omitted for top-level dispatches, so
+  non-nested rows stay byte-identical) and the dashboard renders
+  `executor → critic` / `critic → executor` when present.
+- **Design-QA fails closed on failed/flaky live capture** (not just missing MCP):
+  a connected-but-failed capture is a blocker, never a pass synthesized from the
+  spec or source code; retry protocol, then `AskUserQuestion`.
+- **Design-QA requires loaded-content capture + a mandatory side-by-side visual
+  diff:** image/media surfaces are only valid once content actually loaded
+  (`img.complete && naturalWidth>0`) — placeholders/broken mocks are a failed
+  capture; prefer the real route with real data over unloaded stories; a
+  numeric-only comparison is not a complete design-QA.
 
 A pixel-cat "software tycoon" monitoring dashboard over every registered
 cat-harness project's `.cat` state. Additive only — no change to the fixed
@@ -67,8 +87,8 @@ cat-harness project's `.cat` state. Additive only — no change to the fixed
   registry change, broadcasting `removed`), and the client surfaces a failed
   unregister as a transient error banner instead of swallowing it.
 
-**Not pushed or tagged.** Per the release protocol, publishing (git tag +
-push) is a separate, user-confirmed follow-up step.
+**Released** on `main` and tagged `v0.4.0` (2026-07-18). Plugin manifests
+(`.claude-plugin/plugin.json`, `marketplace.json`) bumped to 0.4.0.
 
 ## 0.2.0
 
