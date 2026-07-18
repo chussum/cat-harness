@@ -110,11 +110,22 @@ record, popped and discarded once paired — never read by anything else):
 rest of the on-disk JSON convention, §9): `round_trip_id` (shared by a paired dispatch+reply),
 `role` (`"dispatch"|"reply"`), `agent_type`, `excerpt` (≤140 chars), `ts` (ISO8601), `prompt_id`
 (metadata-only, may be `null`), `paired` (`true` when a FIFO match was found, `false` for an
-unmatched reply):
+unmatched reply), and the OPTIONAL `parent_agent_type` (Feature B, nested dispatch — see below;
+**present only** when the dispatcher was itself a cat-harness subagent, OMITTED for a top-level
+leader dispatch so the non-nested line stays byte-identical to the pre-Feature-B format):
 
 ```json
 {"round_trip_id":"uuid","role":"dispatch","agent_type":"cat-harness:executor","excerpt":"...","ts":"ISO8601","prompt_id":"uuid|null","paired":true}
 {"round_trip_id":"uuid","role":"reply","agent_type":"cat-harness:executor","excerpt":"...","ts":"ISO8601","prompt_id":"uuid|null","paired":true}
+```
+
+Nested (Feature B) — an executor that itself dispatched a critic. `agent_type` still names the
+CHILD (critic); `parent_agent_type` names the dispatcher, so the UI renders `executor → critic`
+instead of `Lead → critic`:
+
+```json
+{"round_trip_id":"uuid","role":"dispatch","agent_type":"cat-harness:critic","parent_agent_type":"cat-harness:executor","excerpt":"...","ts":"ISO8601","prompt_id":"uuid|null","paired":true}
+{"round_trip_id":"uuid","role":"reply","agent_type":"cat-harness:critic","parent_agent_type":"cat-harness:executor","excerpt":"...","ts":"ISO8601","prompt_id":"uuid|null","paired":true}
 ```
 
 Activity marker schema v2 (`.session-activity.json`):
@@ -292,7 +303,11 @@ namespaced `subagent_type`/`agent_type` values only (`cat-harness:planner|archit
   (up through the first `.`/`!`/`?`), then hard-truncated regardless — and enqueues
   `{roundTripId, agentType, dispatchExcerpt, dispatchedAt, promptId}` onto a bounded FIFO queue per
   `agentType` in `state/dialogue-pending.json` (~50-entry cap, oldest evicted first). `prompt_id` is
-  carried as `promptId` metadata only — see the pairing-strategy note below.
+  carried as `promptId` metadata only — see the pairing-strategy note below. **Feature B (nested
+  dispatch):** also reads the dispatching payload's OWN `agent_type` — present only when this
+  `PreToolUse[Agent]` fired from INSIDE a running subagent (a cat-harness agent that itself dispatched
+  a subagent) — and, when it is itself namespaced `cat-harness:*`, records it as `parentAgentType` on
+  the pending record. A top-level (leader) dispatch has no `agent_type`, so `parentAgentType` is `null`.
 - **Reply half** (`subagentstop`, new mode): reads `agent_type` (scope key) and extracts the same
   ≤140-char excerpt from `last_assistant_message` (primary); if absent, a bounded tail-read
   (16 KiB) of `agent_transcript_path` then `transcript_path` is a fallback-only source, scanning
@@ -325,6 +340,18 @@ namespaced `subagent_type`/`agent_type` values only (`cat-harness:planner|archit
   user-side as **BOTH halves** (Intent Reconciliation, `pending-approval.md`) — capturing the
   leader's dispatch excerpt AND the subagent's reply excerpt, not just one side — which is why this
   subsection has a dispatch half and a reply half at all.
+- **Feature B nested-dispatch capture (LIVE-CONFIRMED, not assumed)**: a real nested capture
+  (executor → critic; raw payloads in `.cat/nested-capture/cap-*.jsonl`, spike-only, deleted at
+  cleanup) confirmed the G001 hypothesis: the INNER `PreToolUse[Agent]` (dispatching the critic)
+  carries the EXECUTOR's own `agent_type: cat-harness:executor` + `agent_id`, i.e. the dispatcher's
+  identity, sitting unused until now — whereas the OUTER (leader → executor) `PreToolUse` has NO
+  `agent_type`. The INNER `SubagentStop` (critic) fired, and all four payloads shared one
+  `session_id`+`cwd` → the SAME `.cat/_session-*` dir (nested same-dir resolution: PASS). Note
+  `transcript_path` stays the LEADER's session transcript even for the inner dispatch; the child's own
+  transcript is `agent_transcript_path` on `SubagentStop`, so `extractReplyExcerpt`'s tail-read
+  fallback is unaffected. The hook threads the captured `parentAgentType` verbatim onto BOTH round-trip
+  lines as `parent_agent_type` (omitted when null); the dashboard's `whoToWhomLabel` renders
+  `{parent} → {child}` / `{child} → {parent}` when present, else `Lead → {child}` as before.
 - **Writer policy**: `state/dialogue-pending.json` and `state/dialogue-excerpts.jsonl` live under
   `state/**`, so G1 auto-protects them from AGENT mutation tools. The hook's own inline writes (atomic
   tmp+rename, mirroring `audit.jsonl`'s append pattern) are sanctioned, as is the CLI's

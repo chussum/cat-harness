@@ -428,14 +428,19 @@ function readExcerpts(dir) {
   }
 }
 
-function dispatchInput({ project, sessionId, agentType, prompt, promptId = "p1", toolName = "Agent" }) {
-  return {
+function dispatchInput({ project, sessionId, agentType, prompt, promptId = "p1", toolName = "Agent", parentAgentType, parentAgentId }) {
+  const input = {
     cwd: project,
     session_id: sessionId,
     prompt_id: promptId,
     tool_name: toolName,
     tool_input: { description: "d", prompt, subagent_type: agentType },
   };
+  // Feature B: a nested dispatch (PreToolUse[Agent] firing INSIDE a running
+  // subagent) carries that dispatcher's own identity in agent_type/agent_id.
+  if (parentAgentType !== undefined) input.agent_type = parentAgentType;
+  if (parentAgentId !== undefined) input.agent_id = parentAgentId;
+  return input;
 }
 
 function subagentStopInput({ project, sessionId, agentType, lastAssistantMessage, promptId = "p1", agentId = "aXXX" }) {
@@ -564,6 +569,80 @@ test("G004 documented cosmetic mispair: 2 same-agentType dispatches, replies arr
   for (const pair of roundTrips.values()) {
     assert.equal(pair.dispatch.paired, true);
     assert.equal(pair.reply.paired, true);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Feature B: nested sub-agent dialogue (a cat-harness agent that itself
+// dispatches a subagent). The parent/dispatcher identity is carried on the
+// INNER PreToolUse[Agent] payload's own agent_type/agent_id — confirmed live
+// against the executor->critic nested capture (.cat/nested-capture). The hook
+// threads it as parent_agent_type onto BOTH round-trip lines; for a top-level
+// (leader) dispatch the field is OMITTED, keeping the non-nested line
+// byte-identical to the pre-Feature-B format.
+// ---------------------------------------------------------------------------
+
+test("Feature B nested dispatch: an executor->critic round trip carries parent_agent_type=cat-harness:executor on BOTH lines", () => {
+  const { project, dir, sessionId } = mkSession();
+  // INNER PreToolUse: the executor (parentAgentType) dispatches a critic. The dispatcher's
+  // own identity rides on input.agent_type/agent_id exactly as the live capture recorded.
+  runHook(
+    "pretool",
+    dispatchInput({
+      project,
+      sessionId,
+      agentType: "cat-harness:critic",
+      prompt: "Critique the rollback safety of a ranking-model swap in one sentence.",
+      promptId: "nested1",
+      parentAgentType: "cat-harness:executor",
+      parentAgentId: "a675b59e2375649ff",
+    }),
+  );
+  const pending = readPending(dir)["cat-harness:critic"].at(-1);
+  assert.equal(pending.parentAgentType, "cat-harness:executor", "the dispatcher identity must be stored on the pending record");
+
+  runHook(
+    "subagentstop",
+    subagentStopInput({ project, sessionId, agentType: "cat-harness:critic", lastAssistantMessage: "Rollback is safe only behind a versioned feature flag. VERDICT: OKAY", promptId: "nested1", agentId: "a9aeada03cd54dfb2" }),
+  );
+  const lines = readExcerpts(dir);
+  assert.equal(lines.length, 2);
+  const dispatchLine = lines.find(l => l.role === "dispatch");
+  const replyLine = lines.find(l => l.role === "reply");
+  assert.equal(dispatchLine.parent_agent_type, "cat-harness:executor");
+  assert.equal(replyLine.parent_agent_type, "cat-harness:executor");
+  assert.equal(dispatchLine.agent_type, "cat-harness:critic", "agent_type still names the CHILD (critic); parent is separate");
+  assert.equal(dispatchLine.round_trip_id, replyLine.round_trip_id);
+});
+
+test("Feature B top-level dispatch: no parent identity -> parent_agent_type key is OMITTED (non-nested line byte-identical)", () => {
+  const { project, dir, sessionId } = mkSession();
+  // Leader->executor: a top-level dispatch has NO agent_type on the PreToolUse payload.
+  runHook("pretool", dispatchInput({ project, sessionId, agentType: "cat-harness:executor", prompt: "Implement the cache layer.", promptId: "top1" }));
+  const pending = readPending(dir)["cat-harness:executor"].at(-1);
+  assert.equal(pending.parentAgentType, null, "top-level dispatch stores parentAgentType=null");
+
+  runHook("subagentstop", subagentStopInput({ project, sessionId, agentType: "cat-harness:executor", lastAssistantMessage: "Done. Tests pass.", promptId: "top1", agentId: "topAgent" }));
+  const lines = readExcerpts(dir);
+  assert.equal(lines.length, 2);
+  for (const l of lines) {
+    assert.ok(!("parent_agent_type" in l), "the parent_agent_type key must be ABSENT for a top-level dispatch, not present-and-null");
+  }
+});
+
+test("Feature B non-namespaced dispatcher: a general-purpose parent dispatching a cat-harness child does NOT record a parent (only cat-harness parents count)", () => {
+  const { project, dir, sessionId } = mkSession();
+  runHook(
+    "pretool",
+    dispatchInput({ project, sessionId, agentType: "cat-harness:planner", prompt: "Draft the plan.", promptId: "np1", parentAgentType: "general-purpose", parentAgentId: "gpAgent" }),
+  );
+  const pending = readPending(dir)["cat-harness:planner"].at(-1);
+  assert.equal(pending.parentAgentType, null, "a non-namespaced dispatcher must not be recorded as a parent");
+
+  runHook("subagentstop", subagentStopInput({ project, sessionId, agentType: "cat-harness:planner", lastAssistantMessage: "Plan drafted.", promptId: "np1", agentId: "plAgent" }));
+  const lines = readExcerpts(dir);
+  for (const l of lines) {
+    assert.ok(!("parent_agent_type" in l), "no parent_agent_type key when the dispatcher is non-namespaced");
   }
 });
 

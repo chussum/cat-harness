@@ -9,6 +9,13 @@ export interface DialogueEntry {
   round_trip_id: string
   role: 'dispatch' | 'reply'
   agent_type: string
+  /**
+   * Feature B (nested dispatch): the cat-harness agent that dispatched this
+   * subagent, when the dispatcher was itself a subagent (e.g. an executor that
+   * dispatched a critic). Absent/null for a top-level (leader) dispatch, which
+   * the timeline renders as `Lead → {child}` exactly as before.
+   */
+  parent_agent_type?: string | null
   excerpt: string
   ts: string
   prompt_id?: string | null

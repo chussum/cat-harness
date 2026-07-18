@@ -32,4 +32,17 @@ describe('whoToWhomLabel', () => {
   it('still strips the cat-harness: prefix from the subagent side', () => {
     expect(whoToWhomLabel('Lead', 'critic', 'reply')).toBe('critic → Lead')
   })
+
+  it('Feature B: with a parent, names the parent role instead of the leader (dispatch)', () => {
+    expect(whoToWhomLabel('Lead', 'cat-harness:critic', 'dispatch', 'cat-harness:executor')).toBe('executor → critic')
+  })
+
+  it('Feature B: with a parent, names the parent role instead of the leader (reply)', () => {
+    expect(whoToWhomLabel('Lead', 'cat-harness:critic', 'reply', 'cat-harness:executor')).toBe('critic → executor')
+  })
+
+  it('Feature B: a null/undefined parent falls back to the leader label (top-level dispatch unchanged)', () => {
+    expect(whoToWhomLabel('Lead', 'cat-harness:planner', 'dispatch', null)).toBe('Lead → planner')
+    expect(whoToWhomLabel('Lead', 'cat-harness:planner', 'dispatch', undefined)).toBe('Lead → planner')
+  })
 })

@@ -64,13 +64,13 @@ function TimelineEntryRow({
     >
       {entry.dispatch && (
         <p className="text-zinc-300" style={WRAP_LONG_TOKENS_STYLE}>
-          <span className="mr-1 text-zinc-500">{whoToWhomLabel(leaderLabel, entry.dispatch.agent_type, 'dispatch')}:</span>
+          <span className="mr-1 text-zinc-500">{whoToWhomLabel(leaderLabel, entry.dispatch.agent_type, 'dispatch', entry.dispatch.parent_agent_type)}:</span>
           {entry.dispatch.excerpt}
         </p>
       )}
       {entry.reply && (
         <p className="mt-1 text-emerald-300" style={WRAP_LONG_TOKENS_STYLE}>
-          <span className="mr-1 text-zinc-500">{whoToWhomLabel(leaderLabel, entry.reply.agent_type, 'reply')}:</span>
+          <span className="mr-1 text-zinc-500">{whoToWhomLabel(leaderLabel, entry.reply.agent_type, 'reply', entry.reply.parent_agent_type)}:</span>
           {entry.reply.excerpt}
         </p>
       )}

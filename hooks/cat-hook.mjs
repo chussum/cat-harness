@@ -949,10 +949,18 @@ function runDialogueDispatchCapture(input, dir) {
     const toolInput = input.tool_input && typeof input.tool_input === "object" ? input.tool_input : {};
     const agentType = typeof toolInput.subagent_type === "string" ? toolInput.subagent_type.trim() : "";
     if (!isNamespacedAgentType(agentType)) return process.exit(0);
+    // Feature B (nested dispatch): a PreToolUse[Agent] fired from INSIDE a running
+    // subagent carries that dispatcher's OWN identity in input.agent_type; a
+    // top-level (leader) dispatch has no agent_type. Capture it as the parent only
+    // when it is itself a namespaced cat-harness agent — verified live against the
+    // nested executor->critic capture (.cat/nested-capture).
+    const dispatcherAgentType = typeof input.agent_type === "string" ? input.agent_type.trim() : "";
+    const parentAgentType = isNamespacedAgentType(dispatcherAgentType) ? dispatcherAgentType : null;
     const promptText = typeof toolInput.prompt === "string" ? toolInput.prompt : "";
     const record = {
       roundTripId: randomUUID(),
       agentType,
+      parentAgentType,
       dispatchExcerpt: firstSentenceExcerpt(promptText),
       dispatchedAt: nowIso(),
       promptId: typeof input.prompt_id === "string" && input.prompt_id ? input.prompt_id : null,
@@ -1045,7 +1053,14 @@ function runSubagentStop(input) {
     const popped = popDialoguePending(dir, agentType);
     if (popped) {
       const roundTripId = (popped && popped.roundTripId) || randomUUID();
-      appendDialogueExcerptLine(dir, {
+      // parent_agent_type is captured at dispatch time (present ONLY for a nested
+      // dispatch — a cat-harness agent that itself dispatched a subagent) and
+      // threaded verbatim onto BOTH round-trip lines. For a top-level (leader)
+      // dispatch it is absent, so the key is OMITTED entirely, keeping the
+      // non-nested on-disk line byte-identical to the pre-Feature-B format.
+      const parentAgentType = (popped && popped.parentAgentType) || null;
+      const withParent = entry => (parentAgentType ? { ...entry, parent_agent_type: parentAgentType } : entry);
+      appendDialogueExcerptLine(dir, withParent({
         round_trip_id: roundTripId,
         role: "dispatch",
         agent_type: agentType,
@@ -1053,8 +1068,8 @@ function runSubagentStop(input) {
         ts: (popped && popped.dispatchedAt) || repliedAt,
         prompt_id: (popped && popped.promptId) ?? null,
         paired: true,
-      });
-      appendDialogueExcerptLine(dir, {
+      }));
+      appendDialogueExcerptLine(dir, withParent({
         round_trip_id: roundTripId,
         role: "reply",
         agent_type: agentType,
@@ -1062,8 +1077,9 @@ function runSubagentStop(input) {
         ts: repliedAt,
         prompt_id: promptId,
         paired: true,
-      });
+      }));
     } else {
+      // Unpaired reply: no dispatch record to source a parent from -> unchanged.
       appendDialogueExcerptLine(dir, {
         round_trip_id: randomUUID(),
         role: "reply",

@@ -46,6 +46,17 @@ cat-harness project's `.cat` state. Additive only — no change to the fixed
 - New `dialogue append` subcommand on the sanctioned state writer
   (`scripts/cat-state.mjs`) as the CLI-accessible sibling of the hook's own
   inline writes to `state/dialogue-excerpts.jsonl`.
+- **Feature B — nested sub-agent dialogue attribution** (additive). A cat-harness
+  subagent that itself dispatches a subagent (e.g. an `executor` dispatching a
+  `critic`) is now attributed to its PARENT rather than the generic leader. The
+  inner `PreToolUse[Agent]` payload's own `agent_type` — live-confirmed to carry
+  the dispatcher's identity on a nested dispatch, absent on a top-level one — is
+  captured as `parentAgentType` and threaded onto both round-trip lines as the
+  optional `parent_agent_type` (OMITTED for top-level dispatches, so non-nested
+  rows stay byte-identical). The dashboard's `whoToWhomLabel` renders
+  `executor → critic` / `critic → executor` when a parent is present, else
+  `Lead → {child}` as before. Hook + snapshot passthrough + UI label + full test
+  coverage (3 new hook fixtures, 3 new label cases); dist rebuilt.
 
 **Not pushed or tagged.** Per the release protocol, publishing (git tag +
 push) is a separate, user-confirmed follow-up step.

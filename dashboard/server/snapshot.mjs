@@ -66,8 +66,9 @@ function buildLedgerTail(sessionDir) {
  * last DIALOGUE_TAIL_N rows so a long-running session's snapshot stays small.
  * Passes through each row's shape as written by hooks/cat-hook.mjs /
  * scripts/cat-state.mjs's `dialogue append` (round_trip_id, role, agent_type,
- * excerpt, ts, prompt_id, paired) verbatim — no reshaping, so this stays a thin
- * read-only mirror of the on-disk contract.
+ * excerpt, ts, prompt_id, paired, and the optional Feature-B parent_agent_type)
+ * verbatim — no reshaping, so this stays a thin read-only mirror of the on-disk
+ * contract.
  */
 function buildDialogue(sessionDir) {
   return tailJsonl(path.join(sessionDir, "state", "dialogue-excerpts.jsonl"), DIALOGUE_TAIL_N);
