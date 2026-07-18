@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1 — Phase-guard no longer misreads `=>`/`->` as a redirect (2026-07-19)
+
+- **Fix `hooks/cat-hook.mjs` false-positive mutation block.** The Bash
+  phase-boundary guard's output-redirect detector allowed any non-`<>`
+  character before `>`, so the ASCII arrow operators `=>` and `->` (JS arrow
+  functions in `node -e`, `->`/`=>` inside heredoc/echo text, `a->b` prose) were
+  misread as an output redirect to a phantom file and DENIED during ralplan/
+  ultragoal planning phases. The redirect detector now excludes `=`/`-`
+  immediately before `>` (a real redirect is never preceded by them); every real
+  redirect (`x>file`, ` >file`, `2>file`) is still caught. +2 regression tests
+  (arrows-not-denied; real-redirect-still-denied); hook suite 36/36. Surfaced
+  during the 0.6.0 ralplan run, where arrow-bearing `cat-state artifact write`
+  heredocs and `node -e` snippets kept tripping the guard.
+
 ## 0.6.0 — Mechanical design-QA gate (2026-07-19)
 
 Closes the incident class where a UI goal was checkpointed `complete` with a

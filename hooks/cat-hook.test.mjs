@@ -128,6 +128,52 @@ test("regression: pretool mutation-guard (Write to .cat/state) is unaffected by 
   assert.match(parsed.hookSpecificOutput.permissionDecisionReason, /runtime-owned/);
 });
 
+// ---------------------------------------------------------------------------
+// Regression: the phase-boundary Bash mutation guard must NOT misread the ASCII
+// arrow operators `=>` / `->` as an output redirect (`> file`). Before the fix,
+// `BASH_MUTATION_COMMAND_RE`'s redirect alternative allowed any non-`<>` char
+// before `>`, so `d=>x`, `a->b`, JS arrow functions in `node -e`, and `->`/`=>`
+// inside heredoc/echo text all looked like a redirect to a phantom file and got
+// denied during ralplan/ultragoal planning phases.
+// ---------------------------------------------------------------------------
+function seedBlockingRalplan(sid = "testsid") {
+  const project = mkTmpProject({ withCat: true });
+  const stateDir = path.join(project, ".cat", `_session-${sid}`, "state");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "ralplan-state.json"),
+    JSON.stringify({ skill: "ralplan", active: true, current_phase: "review", updated_at: "2026-01-01T00:00:00.000Z" }),
+  );
+  return { project, sid };
+}
+
+function bashPretool(project, sid, command) {
+  return runHook("pretool", { cwd: project, session_id: sid, tool_name: "Bash", tool_input: { command } });
+}
+
+test("regression: `=>`/`->` arrows are NOT misread as a redirect and NOT denied during a blocking ralplan phase", () => {
+  const { project, sid } = seedBlockingRalplan();
+  for (const command of [
+    `node -e 'process.stdin.on("data", d => { globalThis.x = d })'`, // JS arrow function
+    `echo "planner -> critic consensus pass"`, // ASCII arrow in echo text
+    `printf 'a=>b and c->d\\n'`, // both arrows in a literal
+  ]) {
+    const result = bashPretool(project, sid, command);
+    assert.equal(result.status, 0, `hook must exit 0 for: ${command}`);
+    assert.equal(result.stdout.trim(), "", `arrow-only command must NOT be denied (no permissionDecision) for: ${command}`);
+  }
+});
+
+test("regression: a REAL output redirect to a non-.cat path is STILL denied during a blocking ralplan phase", () => {
+  const { project, sid } = seedBlockingRalplan();
+  const outside = path.join(os.tmpdir(), "cat-hook-redirect-regression.txt");
+  const result = bashPretool(project, sid, `echo hi > ${outside}`);
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.hookSpecificOutput.permissionDecision, "deny", "a real `> file` redirect must still be caught as a mutation");
+  assert.match(parsed.hookSpecificOutput.permissionDecisionReason, /planning phase boundary/i);
+});
+
 test("regression: stop with no state dir is a silent no-op regardless of CAT_HARNESS_HOME", () => {
   const projectWithCat = mkTmpProject({ withCat: true });
   const home = mkTmpHome();

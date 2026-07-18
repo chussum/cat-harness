@@ -89,8 +89,14 @@ const SIGNAL_DETECTORS = [
 // skill-state/deep-interview-mutation-guard.ts, plus git apply|patch per
 // DESIGN.md §5).
 // ---------------------------------------------------------------------------
+// The redirect alternative's leading char class excludes `=` and `-` so the
+// ASCII arrow operators `=>` and `->` (JS arrow functions, ASCII arrows in
+// heredoc/echo text, `a->b` prose) are NOT misread as an output redirect to a
+// file named by whatever follows the `>`. A real redirect `>` is never
+// immediately preceded by `=`/`-` (those only form the `=>`/`->` operators);
+// `x>file`, ` >file`, `2>file` etc. are all still caught.
 const BASH_MUTATION_COMMAND_RE =
-  /(?:^|[;&|\n])\s*(?:\w+=[^\s]+\s+)*(?:sudo\s+)?(?:tee|touch|rm|mkdir|cp|mv|install|truncate)\b([^;&|\n]*)|(?:^|[^<>])(?:>>?|\d>>?)\s*([^\s;&|]+)/gi;
+  /(?:^|[;&|\n])\s*(?:\w+=[^\s]+\s+)*(?:sudo\s+)?(?:tee|touch|rm|mkdir|cp|mv|install|truncate)\b([^;&|\n]*)|(?:^|[^<>=-])(?:>>?|\d>>?)\s*([^\s;&|]+)/gi;
 const BASH_IN_PLACE_MUTATION_COMMAND_RE =
   /(?:^|[;&|\n])\s*(?:\w+=[^\s]+\s+)*(?:sudo\s+)?(?:sed|perl)\b([^;&|\n]*)/gi;
 const BASH_OPAQUE_INTERPRETER_WRITE_RE =
