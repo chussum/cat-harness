@@ -38,8 +38,13 @@ A provided design source means design verification is REQUIRED. If the capabilit
 is not connected, you may NOT quietly drop to a lower fidelity and pass — that is exactly the silent
 pass this gate exists to prevent. Instead, drive the user to connect it, or get an explicit waiver.
 
-- **Live capture — Playwright MCP (required for screenshots + computed-style measurement).** Confirm a
-  `browser_navigate` tool is available.
+- **Live capture — Playwright MCP (required for screenshots + computed-style measurement).** This is
+  BUNDLED with cat-harness (`.claude-plugin/plugin.json`'s `mcpServers.playwright`), so it is normally
+  already present — no manual `claude mcp add` needed. Its tools surface under the plugin-scoped prefix
+  `mcp__plugin_cat-harness_playwright__*` (e.g. `browser_navigate`, `browser_resize`, `browser_evaluate`,
+  `browser_snapshot`). Confirm a `browser_navigate` tool is available; the first use downloads Chromium
+  (deferred, one-time). If it is somehow absent (the user disabled cat-harness's bundled MCP), that is a
+  missing-capability BLOCKER below, not a reason to degrade.
 - **Design-side extraction (first available wins):** Figma MCP Dev Mode preferred — no token needed
   (`get_metadata`, `get_design_context`, `get_variable_defs`, `get_screenshot`). Else Figma REST API
   with a user-supplied `figd_` token (`/v1/files/{key}/nodes`, `/v1/images`). Else the logged-in Chrome
@@ -49,10 +54,11 @@ pass this gate exists to prevent. Instead, drive the user to connect it, or get 
 **If the required capability for a PRESENT design source is missing, STOP and ask the user via
 AskUserQuestion — do not proceed to a verdict on your own.** Offer, in the user's language, exactly
 these outcomes and nudge toward installing the tool:
-1. **Connect the MCP (recommended)** — give the concrete step: Figma MCP (Dev Mode: enable in the
-   Figma desktop app, or add to `~/.claude.json` `mcpServers`), and/or Playwright MCP
-   (`/mcp`, or `~/.claude.json` `mcpServers`: `npx @playwright/mcp@latest`). Then wait for connection
-   and run the full lane.
+1. **Connect the MCP (recommended)** — give the concrete step. Playwright is BUNDLED with cat-harness,
+   so normally it is already there; only if the user disabled it, re-enable cat-harness's bundled MCP in
+   `/mcp` (or add `npx @playwright/mcp@latest` to `~/.claude.json` `mcpServers`). Figma MCP is the piece
+   the user usually needs to connect: Dev Mode (enable in the Figma desktop app) or add to
+   `~/.claude.json` `mcpServers`. Then wait for connection and run the full lane.
 2. **Use the logged-in Chrome (claude-in-chrome)** — capture the Figma frame and the rendered app in
    the already-authenticated browser, no MCP install needed.
 3. **Waive design verification for this goal (explicit)** — only if the user deliberately chooses it.

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 — Bundle Playwright MCP for design-QA (2026-07-18)
+
+- **Playwright MCP is now bundled with cat-harness** (`.claude-plugin/plugin.json`
+  `mcpServers.playwright` → `npx @playwright/mcp@latest`). The design-QA evidence
+  lane's required live-capture engine no longer needs a manual `claude mcp add` —
+  it's available out of the box (tools under `mcp__plugin_cat-harness_playwright__*`;
+  Chromium downloads lazily on first browser action). Always-on when the plugin is
+  enabled (Claude Code plugin manifests have no per-server default-off knob); users
+  can still disable it in `/mcp`. Figma MCP stays user-connected (Dev Mode is
+  environment/auth-bound and can't be self-contained-bundled). `design-qa.md`
+  updated: Playwright presented as bundled, the fail-closed connect-prompt now
+  points users at Figma rather than Playwright.
+
 ## 0.4.0 — Tycoon dashboard, nested-dialogue attribution, design-QA hardening, ghost-floor fix (2026-07-18)
 
 First tagged release since 0.2.0. Bundles the prepared-but-never-tagged 0.3.0
