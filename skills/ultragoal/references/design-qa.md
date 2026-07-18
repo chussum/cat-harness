@@ -159,6 +159,11 @@ Rule: extract NUMBERS from the design source, never eyeball a screenshot. Use `g
 node size/position and `get_design_context` (or REST node JSON) for CSS values; `get_variable_defs`
 for color/type tokens. Screenshots are for visual cross-check only, not the basis of a numeric verdict.
 
+Efficiency: a Figma node response for a whole frame can run to thousands of lines. Request the SPECIFIC
+in-scope node (the mapped component/frame), not its parent tree, and pull it ONCE — persist the numbers
+you need into the policy doc below and reuse them, rather than re-fetching the same node repeatedly
+across the compare loop. Scope every `get_metadata`/`get_design_context` call to the target node id.
+
 Persist a compact policy doc at `.cat/_session-{sid}/ultragoal/artifacts/design-policy-{goal}.md`
 (written in the user's language — it is user-facing evidence). Keep it to the surfaces in scope: a
 short table per surface of `element | property | expected value | figma node`. If a policy doc already

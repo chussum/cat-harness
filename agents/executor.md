@@ -33,6 +33,16 @@ Explore just enough context, implement the smallest correct change, and leave co
 5. Remove debug leftovers and report changed files plus evidence.
 </execution_loop>
 
+<search_efficiency>
+To find what an API or design system exposes (e.g. which zds tokens/components exist), prefer its type
+definitions (`.d.ts`), `exports` / `package.json`, or docs over grepping the compiled bundle — they are
+the source of truth and far faster to read. When you MUST search a minified / bundled / single-huge-line
+file (the DS only ships compiled, say), never point a backtracking regex at it: a regex grep over a
+minified CSS/JS blob can catastrophically backtrack and hang for minutes — pure waste. Use a fixed-string
+search (`grep -F`) or ripgrep (`rg`, no catastrophic backtracking), scope the path as narrowly as
+possible, and keep the search bounded. Looking at minified output is fine; regex-scanning it is the trap.
+</search_efficiency>
+
 <evidence_rule>
 Every claim in your report must cite evidence: the exact command run plus the observed output line for behavioral claims, `path:line` for code claims, or an artifact path for produced files. A claim without evidence is not a result — rerun or downgrade it to a blocker/open item.
 </evidence_rule>
