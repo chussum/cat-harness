@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { readRegistry, upsertRegistryRoot, removeRegistryRoot, reconcileWatchedRoots } from "./registry.mjs";
+import { readRegistry, upsertRegistryRoot, removeRegistryRoot, reconcileWatchedRoots, pruneMissingRoots } from "./registry.mjs";
 
 function mkTmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "cat-harness-registry-test-"));
@@ -84,4 +84,30 @@ test("registry: reconcileWatchedRoots reports added and removed roots without mu
   // inputs untouched
   assert.deepEqual(registry.roots, ["/p/a", "/p/b", "/p/c"]);
   assert.deepEqual([...watched].sort(), ["/p/a", "/p/x"]);
+});
+
+test("registry: pruneMissingRoots drops roots whose dir is gone, keeps existing ones, and rewrites the file", () => {
+  const home = mkTmpHome();
+  const alive = fs.mkdtempSync(path.join(os.tmpdir(), "cat-harness-alive-"));
+  const ghost = fs.mkdtempSync(path.join(os.tmpdir(), "cat-harness-ghost-"));
+  upsertRegistryRoot(home, alive);
+  upsertRegistryRoot(home, ghost);
+  fs.rmSync(ghost, { recursive: true, force: true }); // delete the dir -> ghost floor
+
+  const { roots, removed } = pruneMissingRoots(home);
+  assert.deepEqual(roots, [path.resolve(alive)], "only the still-existing root survives");
+  assert.deepEqual(removed, [path.resolve(ghost)], "the deleted root is reported as removed");
+  assert.deepEqual(readRegistry(home).roots, [path.resolve(alive)], "registry.json is rewritten without the ghost");
+});
+
+test("registry: pruneMissingRoots is a no-op (no removals, no report) when every root exists", () => {
+  const home = mkTmpHome();
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), "cat-harness-a-"));
+  const b = fs.mkdtempSync(path.join(os.tmpdir(), "cat-harness-b-"));
+  upsertRegistryRoot(home, a);
+  upsertRegistryRoot(home, b);
+
+  const { roots, removed } = pruneMissingRoots(home);
+  assert.deepEqual(removed, [], "nothing pruned when all roots exist");
+  assert.deepEqual(roots.sort(), [path.resolve(a), path.resolve(b)].sort());
 });

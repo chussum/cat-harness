@@ -58,6 +58,15 @@ cat-harness project's `.cat` state. Additive only — no change to the fixed
   `Lead → {child}` as before. Hook + snapshot passthrough + UI label + full test
   coverage (3 new hook fixtures, 3 new label cases); dist rebuilt.
 
+- **Ghost-floor self-heal + unregister failure feedback.** A registered project
+  whose directory no longer exists on disk (deleted temp dir, moved repo) used to
+  linger as an empty dormant floor that "폐업 처리" couldn't remove while the
+  status server was down — the unregister request failed and the UI swallowed it
+  silently, so nothing appeared to happen. Now the server prunes any root whose
+  dir is gone (`registry.mjs`'s `pruneMissingRoots`, on boot / fresh snapshot /
+  registry change, broadcasting `removed`), and the client surfaces a failed
+  unregister as a transient error banner instead of swallowing it.
+
 **Not pushed or tagged.** Per the release protocol, publishing (git tag +
 push) is a separate, user-confirmed follow-up step.
 

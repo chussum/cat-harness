@@ -51,4 +51,43 @@ describe('useUnregisterFloor', () => {
     })
     expect(consoleErrorSpy).toHaveBeenCalled()
   })
+
+  it('reports a non-OK HTTP response through onError (root + HTTP-status reason)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const onError = vi.fn()
+
+    const { result } = renderHook(() => useUnregisterFloor({ onError }))
+    act(() => result.current.unregister('/projects/dormant'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(onError).toHaveBeenCalledWith('/projects/dormant', 'HTTP 503')
+  })
+
+  it('reports a rejected fetch (server down) through onError with the error message', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const onError = vi.fn()
+
+    const { result } = renderHook(() => useUnregisterFloor({ onError }))
+    act(() => result.current.unregister('/projects/dormant'))
+    await act(async () => {
+      await Promise.resolve().then(() => Promise.resolve())
+    })
+    expect(onError).toHaveBeenCalledWith('/projects/dormant', 'network down')
+  })
+
+  it('does not call onError on a successful unregister', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const onError = vi.fn()
+
+    const { result } = renderHook(() => useUnregisterFloor({ onError }))
+    act(() => result.current.unregister('/projects/dormant'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(onError).not.toHaveBeenCalled()
+  })
 })

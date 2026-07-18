@@ -30,7 +30,7 @@ import {
   getIdleMs,
   getPort,
 } from "./constants.mjs";
-import { readRegistry, reconcileWatchedRoots, removeRegistryRoot } from "./registry.mjs";
+import { pruneMissingRoots, readRegistry, reconcileWatchedRoots, removeRegistryRoot } from "./registry.mjs";
 import { buildProjectSnapshot, buildSnapshot } from "./snapshot.mjs";
 import { compareAndDeleteServerJson, isValidHealthToken, writeServerJson } from "./singleton.mjs";
 import { createWatcher } from "./watcher.mjs";
@@ -137,7 +137,11 @@ export function createServer(opts = {}) {
   // server.json, returned from start(), and reported by the health endpoint.
   let actualPort = port;
 
-  let registry = readRegistry(homeDir);
+  // Ghost-floor self-heal on boot: drop any registered root whose directory is
+  // gone (deleted temp dir, moved repo) before the first snapshot, so a stale
+  // registry never seeds an undismissable empty floor. No clients exist yet, so
+  // this boot prune just needs the registry cleaned (no SSE announce).
+  let registry = pruneMissingRoots(homeDir);
   let snapshot = buildSnapshot(registry.roots);
   const sse = createSseHub();
 
@@ -201,7 +205,24 @@ export function createServer(opts = {}) {
     return existed;
   }
 
+  /**
+   * Ghost-floor self-heal for the live server: prune registry roots whose dir is
+   * gone, then drop each from the in-memory snapshot and announce it via the same
+   * `removed` SSE event a real unregister uses — so a deleted project's floor
+   * disappears for every open client without needing an explicit 폐업 click (which
+   * would fail anyway if nothing catches it). Returns the pruned root list.
+   */
+  function pruneGhostFloors() {
+    const { roots, removed } = pruneMissingRoots(homeDir);
+    for (const root of removed) {
+      applyRegistryRemoval(root);
+    }
+    return roots;
+  }
+
   function handleRegistryChange() {
+    registry = readRegistry(homeDir);
+    pruneGhostFloors();
     registry = readRegistry(homeDir);
     const { added, removed } = reconcileWatchedRoots(registry, new Set(watcher.watchedRoots()));
     watcher.reconcile(registry.roots);
@@ -225,6 +246,7 @@ export function createServer(opts = {}) {
 
   /** F18-style guarantee: always rebuild fresh from a fresh registry read, never replayed state. */
   function freshSnapshot() {
+    pruneGhostFloors();
     registry = readRegistry(homeDir);
     snapshot = buildSnapshot(registry.roots);
     watcher.reconcile(registry.roots);

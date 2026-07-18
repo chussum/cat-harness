@@ -7,6 +7,7 @@
  * Disk is the sole source of truth: no in-memory-only registry state is authoritative.
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import { registryPath } from "./constants.mjs";
 import { readJsonSafe, writeJsonFile } from "./fsutil.mjs";
@@ -55,6 +56,30 @@ export function removeRegistryRoot(homeDir, root) {
   const next = { version: 1, roots, updated_at: new Date().toISOString() };
   writeJsonFile(file, next);
   return next;
+}
+
+/**
+ * Ghost-floor self-heal: removes any registered root whose DIRECTORY no longer
+ * exists on disk (e.g. a temp project dir that was deleted, or a moved repo) —
+ * such a root can only ever render as an empty, dormant "ghost" floor that the
+ * user can't get rid of except by unregistering it, and a deleted dir will
+ * never re-register itself. Only prunes on a clear signal (the root path is
+ * absent), never merely because `.cat` is missing (a real project between runs
+ * legitimately has a root but an empty/absent `.cat`). Returns
+ * `{ roots, removed }` — `removed` is the absolute-path list actually dropped
+ * (empty when nothing was pruned), so the caller can broadcast a `removed` SSE
+ * event per ghost. Rewrites registry.json only when something was pruned, same
+ * idempotent shape as `upsertRegistryRoot`/`removeRegistryRoot`.
+ */
+export function pruneMissingRoots(homeDir) {
+  const file = registryPath(homeDir);
+  const current = readRegistry(homeDir);
+  const removed = current.roots.filter((r) => !fs.existsSync(r));
+  if (removed.length === 0) return { roots: current.roots, removed };
+  const removedSet = new Set(removed);
+  const roots = current.roots.filter((r) => !removedSet.has(r));
+  writeJsonFile(file, { version: 1, roots, updated_at: new Date().toISOString() });
+  return { roots, removed };
 }
 
 /**

@@ -514,7 +514,14 @@ introduces outside any single project.
   `hooks/cat-hook.mjs`'s router step). Roots are added only once a project's `.cat` directory already
   exists (registration gate — a bare `cd` into a fresh, uninitialized repo never adds a dormant floor).
   A dedicated `fs.watch` on this file (`watcher.mjs`) reconciles added/removed roots into the live
-  per-project watcher set with no server restart.
+  per-project watcher set with no server restart. **Ghost-floor self-heal** (`registry.mjs`'s
+  `pruneMissingRoots`): a registered root whose DIRECTORY no longer exists on disk (a deleted temp
+  project, a moved repo) can only render as an empty, undismissable dormant floor and will never
+  re-register itself, so the server prunes it — on boot, on every fresh snapshot, and on registry
+  change — rewriting `registry.json` without it and broadcasting the same `removed` SSE event a real
+  unregister uses, so open clients drop the ghost live. Prunes ONLY on the clear signal that the root
+  path is absent, never merely because `.cat` is missing (a real project between runs legitimately has
+  a root but an empty/absent `.cat`).
 - `server.json` — `{ port, pid, token, boot_nonce, started_at }`. Written **only** after the server's
   own `listen()` call has already succeeded (never speculatively — a failed bind can never masquerade
   as live). `boot_nonce` (`crypto.randomUUID()`) + `started_at` make the singleton lifecycle race-safe
@@ -556,6 +563,11 @@ existing per-project `delta` broadcast, added because a registry removal previou
 notification at all (silently correct only for a client's *next* full reconnect). A project reappears
 automatically the moment its hook re-registers it (its `.cat` directory already existing is the
 existing registration gate above) — there is deliberately no separate "restore" affordance anymore.
+**Client-side failure feedback**: the browser's unregister call (`features/floor-unregister`'s
+`useUnregisterFloor`) never throws, but it now reports a non-OK/rejected request through an `onError`
+callback so `DashboardPage` can show a transient error banner ("폐업 실패 — 상태 서버 실행 중인지 확인").
+Previously the failure was swallowed silently, so an unregister against a down/unreachable server
+looked identical to nothing happening ("폐업 눌러도 안 사라짐") — the banner makes that visible.
 
 **Singleton lifecycle (compare-and-delete, `dashboard/server/singleton.mjs`)**: on graceful or idle
 shutdown, the server re-reads `server.json` fresh from disk immediately before unlinking and deletes it

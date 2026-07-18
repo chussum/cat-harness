@@ -21,6 +21,8 @@ const en: Dictionary = {
 
   'floor.dismissTooltip': 'Close floor',
   'floor.dismissConfirm': ({ name }) => `Close "${name}"'s floor?`,
+  'floor.dismissError': ({ name, reason }) => `Couldn't close "${name}"'s floor (${reason}). Is the status server running?`,
+  'common.dismiss': 'Dismiss',
 
   'connection.connected': 'connected',
   'connection.reconnecting': 'reconnecting…',
@@ -94,6 +96,8 @@ const ko: Dictionary = {
 
   'floor.dismissTooltip': '폐업 처리',
   'floor.dismissConfirm': ({ name }) => `"${name}" 층을 폐업 처리할까요?`,
+  'floor.dismissError': ({ name, reason }) => `"${name}" 층 폐업 실패 (${reason}). 상태 서버가 실행 중인지 확인하세요.`,
+  'common.dismiss': '닫기',
 
   'connection.connected': '연결됨',
   'connection.reconnecting': '재연결 중…',
