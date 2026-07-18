@@ -23,22 +23,48 @@ leader assembles the quality gate) ONLY when BOTH hold:
 2. A design source is available: a Figma URL or a design-policy doc — taken from the deep-interview
    spec's `design_source` field, the plan, or asked from the user ONCE via AskUserQuestion.
 
-If no design source resolves after asking once, SKIP the lane and set
-`qa.evidence` to note "design verification not applicable (no design source)". Do not block on it.
+Distinguish two cases before deciding to skip:
+- **No design source was ever provided** (nothing in the spec's `design_source`, nothing in the plan,
+  and the one AskUserQuestion returns none) → SKIP the lane, set `qa.evidence` to
+  "design verification not applicable (no design source)". This is the ONLY legitimate skip.
+- **A design source WAS provided** (a Figma/design URL or policy doc exists in the spec, the plan, or
+  the request) → the lane is IN SCOPE and MUST run to a verdict. If you cannot reach or read that
+  source, that is a missing-capability BLOCKER (next section), NOT a skip. Never silently treat a
+  provided-but-unreachable design source as "no source".
 
-## Environment checks (degrade explicitly, record every degradation in `qa.evidence`)
+## Environment checks — FAIL CLOSED when a design source is present (do NOT auto-degrade)
+
+A provided design source means design verification is REQUIRED. If the capability needed to verify it
+is not connected, you may NOT quietly drop to a lower fidelity and pass — that is exactly the silent
+pass this gate exists to prevent. Instead, drive the user to connect it, or get an explicit waiver.
 
 - **Live capture — Playwright MCP (required for screenshots + computed-style measurement).** Confirm a
-  `browser_navigate` tool is available. If absent, tell the user to connect it (`/mcp`, or add to
-  `~/.claude.json` `mcpServers`: `npx @playwright/mcp@latest`) and either wait for connection, or
-  degrade to inspection-only (compare design spec against source code / prior screenshots) with an
-  explicit `qa.evidence` note that live capture was unavailable.
+  `browser_navigate` tool is available.
 - **Design-side extraction (first available wins):** Figma MCP Dev Mode preferred — no token needed
   (`get_metadata`, `get_design_context`, `get_variable_defs`, `get_screenshot`). Else Figma REST API
-  with a user-supplied `figd_` token (`/v1/files/{key}/nodes`, `/v1/images`). Else user-provided design
-  screenshots as a last resort (numeric spec then comes only from what the design-policy doc states).
-- Each fallback taken (inspection-only, REST instead of MCP, screenshots-only) is one line in
-  `qa.evidence`. Never silently proceed at a lower fidelity than the caller expects.
+  with a user-supplied `figd_` token (`/v1/files/{key}/nodes`, `/v1/images`). Else the logged-in Chrome
+  session via the **claude-in-chrome** skill (navigate the Figma frame + the running app and capture
+  both) as an alternative live path. Else user-provided design screenshots as a last resort.
+
+**If the required capability for a PRESENT design source is missing, STOP and ask the user via
+AskUserQuestion — do not proceed to a verdict on your own.** Offer, in the user's language, exactly
+these outcomes and nudge toward installing the tool:
+1. **Connect the MCP (recommended)** — give the concrete step: Figma MCP (Dev Mode: enable in the
+   Figma desktop app, or add to `~/.claude.json` `mcpServers`), and/or Playwright MCP
+   (`/mcp`, or `~/.claude.json` `mcpServers`: `npx @playwright/mcp@latest`). Then wait for connection
+   and run the full lane.
+2. **Use the logged-in Chrome (claude-in-chrome)** — capture the Figma frame and the rendered app in
+   the already-authenticated browser, no MCP install needed.
+3. **Waive design verification for this goal (explicit)** — only if the user deliberately chooses it.
+   Record a loud waiver line in `qa.evidence` ("design source X provided but verification WAIVED by
+   user — visual design NOT verified"), and set the design dimension `qa.status` to not-verified.
+
+Until the user picks 1 or 2 (capability becomes available) or explicitly waives via 3, the design
+dimension is a **blocker** — emit a `qa.blockers` entry ("design source provided but the verification
+capability (Figma/Playwright MCP) is not connected; awaiting user setup or explicit waiver") and the
+goal CANNOT checkpoint `complete` on design grounds. There is no automatic inspection-only pass.
+Every real fidelity fallback actually used (REST instead of MCP, chrome instead of Playwright,
+screenshots-only) is still recorded as one line in `qa.evidence`.
 
 ## Step 1 — Extract the design policy (scoped to THIS goal)
 

@@ -299,7 +299,7 @@ status: pending-approval
 ## Metadata
 - Rounds: {count} | Final Ambiguity: {score}% | Type: {greenfield|brownfield} | Generated: {ISO8601}
 - Threshold: {threshold} | Threshold Source: {threshold_source}
-- Design Source: {Figma URL / design-policy doc path / none} <!-- record any design reference the user provided or mentioned; ultragoal's design-qa evidence lane consumes it -->
+- Design Source: {Figma URL / design-policy doc path / none} <!-- MANDATORY capture: any design or external-resource URL the user pastes or mentions (Figma, a design doc, a reference site) MUST be recorded here VERBATIM — a pasted design link is a hard signal, never omit or summarize it away. If more than one, list all. ultragoal's design-qa evidence lane consumes it and FAILS CLOSED (blocks + nudges MCP install) when a source is present but its capture tool is not connected — so dropping the link here silently disables that gate. -->
 
 - Status: {ready | refined | early-exit}   <!-- ready: a ≤ threshold; refined: early exit at 0.30 ≥ a > threshold; early-exit: a > 0.30 -->
 - Initial Context Summarized: {yes|no} | Restated Goal: {restated_goal}

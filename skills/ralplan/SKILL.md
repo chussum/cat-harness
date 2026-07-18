@@ -111,9 +111,14 @@ sharing the same `NN`.
    - If only one viable option remains, explicit invalidation rationale for alternatives
    - Deliberate mode only: pre-mortem (3 scenarios) + expanded test plan
      (unit/integration/e2e/observability)
-   - If the task carries a design source (deep-interview spec `Design Source` or a Figma URL in
-     the request): the plan's acceptance criteria MUST include design verification — UI goals will
-     be gated by ultragoal's `references/design-qa.md` evidence lane at completion.
+   - If the task carries a design source (deep-interview spec `Design Source` or a Figma/design URL in
+     the request): the plan MUST copy that source URL VERBATIM into the plan body (never let it fall
+     out of the plan), and its acceptance criteria MUST include design verification — UI goals will be
+     gated by ultragoal's `references/design-qa.md` evidence lane at completion. If the design-
+     verification capability (Figma/Playwright MCP or the claude-in-chrome path) is not yet connected,
+     the plan records it as a **setup prerequisite** (the design-QA gate fails closed and nudges the
+     user to connect it — it does not silently pass). Do not drop a design source just because the tool
+     to check it is missing; surface the setup need instead.
 
    Await the planner; record its receipt. Do not paste the plan body.
 2. **User draft review** *(only if the user asked for interactive review)*: present the

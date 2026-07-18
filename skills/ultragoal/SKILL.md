@@ -302,8 +302,11 @@ A goal cannot be checkpointed `complete` until this gate has run, in order:
      extraction → Figma↔implementation mapping → Playwright capture at design breakpoints →
      computed-style comparison → severity-classified gaps). Unresolved Critical/Major design gaps
      are completion blockers (`qa.blockers`); its findings, policy doc, and screenshots feed
-     `qa.evidence` and `qa.artifacts`. No design source after asking once → skip the lane and note
-     "design verification not applicable" in `qa.evidence`.
+     `qa.evidence` and `qa.artifacts`. A design source that was provided but whose capture tool
+     (Figma/Playwright MCP) is not connected is ALSO a blocker — the lane fails closed and nudges the
+     user to connect the MCP (or use claude-in-chrome, or explicitly waive); it never silently degrades
+     to inspection-only and passes. Only genuinely NO design source after asking once → skip the lane
+     and note "design verification not applicable" in `qa.evidence`.
    - CLI: the actual passed command invocations with captured output, re-runnable as stated.
    - API/package/algorithm: a test-report artifact file or the passed test commands covering
      boundary/adversarial cases.
