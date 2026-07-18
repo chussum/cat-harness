@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.1 — Local-timezone timestamps in the dashboard (2026-07-18)
+
+- **Dashboard renders ledger timestamps in the viewer's local timezone.** The
+  side panel showed the server's raw ISO-8601 UTC strings (e.g.
+  `2026-07-18T07:45:37.419Z`), which read 9h off wall-clock for an Asia/Seoul
+  viewer. New `shared/lib/formatTs.ts` `formatLocalTs` converts to the browser's
+  local time (each viewer sees their own machine's clock) as
+  `YYYY-MM-DD HH:mm:ss.SSS`, 24-hour, milliseconds kept so same-second events
+  stay distinguishable. The server still stores UTC (canonical) — only the
+  display localizes.
+
 ## 0.5.0 — Bundle Playwright MCP for design-QA (2026-07-18)
 
 - **Playwright MCP is now bundled with cat-harness** (`.claude-plugin/plugin.json`

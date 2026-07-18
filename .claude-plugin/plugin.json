@@ -1,6 +1,6 @@
 {
   "name": "cat-harness",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Auto-gating interview→plan→execute workflow harness inspired by gajae-code",
   "mcpServers": {
     "playwright": {
