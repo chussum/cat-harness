@@ -12,7 +12,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|MultiEdit|Write|NotebookEdit|Bash|Skill",
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit|Bash|Skill|Agent|Task",
         "hooks": [
           {
             "type": "command",
@@ -27,6 +27,16 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/cat-hook.mjs\" stop"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/cat-hook.mjs\" subagentstop"
           }
         ]
       }

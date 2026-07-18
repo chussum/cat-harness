@@ -12,6 +12,7 @@
  *   goal init    --brief <path|->
  *   goal checkpoint --goal GNNN --status <s> [--quality-gate-json <path|->]
  *   ledger append --json <str|->
+ *   dialogue append --json <str|->  (G004: sanctioned append to state/dialogue-excerpts.jsonl)
  *   floor
  *   receipt verify --goal GNNN
  *
@@ -1114,6 +1115,35 @@ async function cmdLedgerAppend(ctx, flags) {
   printJson({ ok: true, event: row.event, event_id: row.event_id, ts: row.ts, ledger_path: rel(ctx, ultragoalPaths(ctx).ledger) });
 }
 
+/**
+ * dialogue append (G004): sanctioned CLI path to append a dialogue-excerpt
+ * row to state/dialogue-excerpts.jsonl — the append-only sibling of
+ * `ledger append`, but scoped to state/** (auto-protected by G1) rather than
+ * ultragoal/. The hook (hooks/cat-hook.mjs) is the primary writer via its own
+ * sanctioned inline writes (dispatch capture + subagentstop reply capture,
+ * mirroring audit.jsonl); this subcommand is the CLI-accessible alternative.
+ */
+async function cmdDialogueAppend(ctx, flags) {
+  if (flags.json === undefined) throw new UsageError("dialogue append requires --json <str|->");
+  const raw = flags.json === "-" ? await readStdin() : flags.json;
+  let entry;
+  try {
+    entry = JSON.parse(raw);
+  } catch (err) {
+    throw new ContractError(`dialogue entry is not valid JSON (${err.message})`);
+  }
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new ContractError("dialogue entry must be a JSON object");
+  }
+  if (entry.role !== "dispatch" && entry.role !== "reply") {
+    throw new ContractError('dialogue entry requires "role" to be "dispatch" or "reply"');
+  }
+  const file = path.join(ctx.root, "state", "dialogue-excerpts.jsonl");
+  appendJsonl(file, entry);
+  touchActivity(ctx);
+  printJson({ ok: true, path: rel(ctx, file), role: entry.role });
+}
+
 function cmdFloor(ctx) {
   const res = readJsonSafe(statePath(ctx, "deep-interview"));
   const state = res.ok ? res.value : {};
@@ -1183,6 +1213,7 @@ subcommands:
   goal init    --brief <path|->
   goal checkpoint --goal GNNN --status <s> [--quality-gate-json <path|->]
   ledger append --json <str|->
+  dialogue append --json <str|->
   floor
   receipt verify --goal GNNN`;
 
@@ -1224,6 +1255,8 @@ async function main() {
       return cmdGoalCheckpoint(ctx, flags);
     case "ledger append":
       return cmdLedgerAppend(ctx, flags);
+    case "dialogue append":
+      return cmdDialogueAppend(ctx, flags);
     case "floor":
       return cmdFloor(ctx);
     case "receipt verify":

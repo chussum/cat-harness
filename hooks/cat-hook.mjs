@@ -1,18 +1,22 @@
 #!/usr/bin/env node
 /**
- * cat-harness runtime hook — single entry point for all three hook events.
+ * cat-harness runtime hook — single entry point for all four hook events.
  *
- *   node cat-hook.mjs router    UserPromptSubmit -> inject routing context (always exit 0)
- *   node cat-hook.mjs pretool   PreToolUse       -> mutation guard + G1 state protection + chain guard
- *   node cat-hook.mjs stop      Stop             -> completion gate (block until workflows terminal)
+ *   node cat-hook.mjs router        UserPromptSubmit -> inject routing context (always exit 0)
+ *   node cat-hook.mjs pretool       PreToolUse       -> mutation guard + G1 state protection +
+ *                                                        chain guard + G004 dialogue dispatch capture
+ *   node cat-hook.mjs stop          Stop             -> completion gate (block until workflows terminal)
+ *   node cat-hook.mjs subagentstop  SubagentStop     -> G004 dialogue reply capture (passive, disk-only)
  *
  * Contract: reads Claude Code hook JSON on stdin, writes ONLY contract JSON to stdout.
  * Never crashes: any error fails open (exit 0), diagnostics go to stderr / audit.jsonl.
  * Zero dependencies (node >= 18 builtins only). No network, no LLM calls.
  */
 
-import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +38,16 @@ const STOP_NUDGE_BUDGET = 10;
 const ROUTER_BLOCK_LIMIT = 4096;
 
 // ---------------------------------------------------------------------------
+// G004 dialogue-excerpt capture constants. Scope is namespaced cat-harness
+// subagent_type/agent_type values only (planner/architect/critic/executor);
+// general-purpose and other non-namespaced dispatches are skipped silently.
+// ---------------------------------------------------------------------------
+const DIALOGUE_NAMESPACE_PREFIX = "cat-harness:";
+const DIALOGUE_EXCERPT_MAX_LEN = 140;
+const DIALOGUE_PENDING_CAP = 50;
+const DIALOGUE_TRANSCRIPT_TAIL_BYTES = 16384;
+
+// ---------------------------------------------------------------------------
 // Keyword table (port of gajae-code hooks/skill-keywords.ts). Priority desc,
 // then keyword length desc, then alphabetical; first match wins.
 // ---------------------------------------------------------------------------
@@ -52,6 +66,12 @@ const KEYWORD_DEFINITIONS = [
 // Advisory hint regexes (never route on their own).
 const VAGUENESS_RE = /not sure|unclear|vague|don't assume|어떻게든|알아서|대충/gi;
 const SCOPE_RISK_RE = /migration|security|breaking change|data loss|마이그레이션|보안/gi;
+// Design/external-resource URL detector: a pasted design link (Figma etc.) must
+// never be silently dropped. When present, the router surfaces it as a directive
+// so the link survives into the spec/plan and the design-QA gate is honored
+// (fail-closed + MCP-install nudge when the capture tool is not connected).
+const DESIGN_SOURCE_RE =
+  /https?:\/\/(?:www\.)?(?:figma\.com\/(?:file|design|proto|board|community\/file)\/|(?:app\.)?zeplin\.io\/|(?:www\.)?sketch\.com\/(?:s|docs)\/)[^\s"'`)<>\]]+/gi;
 const SIGNAL_DETECTORS = [
   [
     "file-path",
@@ -495,6 +515,26 @@ function uniqueMatches(text, regex, limit) {
   return [...seen];
 }
 
+// Extract design/external-resource URLs (case-preserved, deduped, capped, each
+// truncated so the 4 KiB router bound is respected). Never throws.
+function detectDesignSources(text, limit = 3) {
+  if (typeof text !== "string" || !text) return [];
+  const seen = new Set();
+  const out = [];
+  const re = new RegExp(DESIGN_SOURCE_RE.source, "gi");
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    let url = match[0];
+    if (url.length > 120) url = `${url.slice(0, 117)}...`;
+    if (!seen.has(url)) {
+      seen.add(url);
+      out.push(url);
+    }
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 function sanitizeHudText(value, limit) {
   const compact = String(value)
     // eslint-disable-next-line no-control-regex
@@ -567,6 +607,13 @@ function buildRouterBlock(input) {
     if (risks.length > 0) advisories.push(`scope-risk: ${risks.map(risk => `"${risk}"`).join(", ")}`);
     if (advisories.length > 0) parts.push(advisories.join(", "));
     if (parts.length > 0) lines.push(`[${parts.join(" | ")}]`);
+
+    const designSources = detectDesignSources(prompt);
+    if (designSources.length > 0) {
+      lines.push(
+        `[design-source: ${designSources.join(", ")} — record this link VERBATIM in the spec's Design Source and the plan; UI work is design-QA gated. If the Figma/Playwright MCP (or claude-in-chrome) is not connected, the gate FAILS CLOSED and nudges install — never skip or auto-pass the design check.]`,
+      );
+    }
   }
 
   lines.push(...ROUTER_LADDER);
@@ -582,7 +629,126 @@ function buildRouterBlock(input) {
   return block;
 }
 
+// ---------------------------------------------------------------------------
+// Dashboard auto-start (G003): project registry auto-registration + a cheap
+// local liveness pre-check that spawns a detached launcher when stale/missing.
+// COMPLETELY ISOLATED from the router's emitted block: this runs in its own
+// try/catch, touches only ~/.cat-harness/{registry,server}.json, and NEVER
+// makes a network call itself (Node has no sync HTTP client — the detached
+// dashboard/server/launcher.mjs process, off this hook's timing budget, is the
+// only place allowed to do the authoritative health-token HTTP probe).
+//
+// Shapes below MIRROR dashboard/server/{constants,singleton,registry}.mjs
+// in-line rather than importing them, so a missing/broken dashboard/ tree can
+// never break router/pretool/stop (matches the codebase's existing accepted
+// duplication style, e.g. cat-hook.mjs's own SKILLS copy vs cat-state.mjs's).
+// ---------------------------------------------------------------------------
+
+/** Mirrors dashboard/server/constants.mjs's getHomeDir. */
+function catHarnessHomeDir() {
+  const override = process.env.CAT_HARNESS_HOME;
+  return override ? path.resolve(override) : path.join(os.homedir(), ".cat-harness");
+}
+
+/**
+ * Cheap, local, synchronous liveness pre-check (mirrors
+ * dashboard/server/singleton.mjs's isLocallyLive): process.kill(pid, 0)
+ * (never signals; throws if no such process) PLUS a well-formed boot_nonce
+ * shape check. This is ADVISORY ONLY, not authoritative — a PID reused by an
+ * unrelated process after the real server died can still read as "alive"
+ * here (see DESIGN.md §10 "PID-reuse posture"). The launcher's own
+ * health-token HTTP probe is what actually self-corrects that case; the
+ * operator remedy for the residual edge is deleting `server.json`.
+ */
+function isServerLocallyLive(homeDir) {
+  let record;
+  try {
+    record = JSON.parse(fs.readFileSync(path.join(homeDir, "server.json"), "utf8"));
+  } catch {
+    return false; // missing or malformed JSON → not live
+  }
+  if (!record || typeof record !== "object") return false;
+  if (typeof record.boot_nonce !== "string" || record.boot_nonce.trim().length === 0) return false;
+  if (typeof record.pid !== "number") return false;
+  try {
+    process.kill(record.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Spawns dashboard/server/launcher.mjs detached + unref'd and returns
+ * immediately. In test mode (CAT_HARNESS_TEST_SPAWN_CAPTURE set), the spawn
+ * is captured to a file instead of actually forked, so hermetic tests can
+ * assert on it without ever touching a real port or process.
+ */
+function spawnDetachedLauncher(pluginRoot) {
+  const launcherPath = path.join(pluginRoot, "dashboard", "server", "launcher.mjs");
+  const testCapture = process.env.CAT_HARNESS_TEST_SPAWN_CAPTURE;
+  if (testCapture) {
+    try {
+      const record = { command: process.execPath, args: [launcherPath], detached: true, unref: true, ts: nowIso() };
+      fs.appendFileSync(testCapture, `${JSON.stringify(record)}\n`);
+    } catch {
+      /* best-effort */
+    }
+    return;
+  }
+  const child = spawn(process.execPath, [launcherPath], { detached: true, stdio: "ignore" });
+  child.unref();
+}
+
+/** Mirrors dashboard/server/registry.mjs's upsertRegistryRoot (atomic tmp+rename write, idempotent). */
+function upsertProjectRegistry(homeDir, root) {
+  const file = path.join(homeDir, "registry.json");
+  let rawRoots = [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.roots)) rawRoots = parsed.roots;
+  } catch {
+    /* missing/corrupt → start fresh, fail open */
+  }
+  // Mirrors dashboard/server/registry.mjs's readRegistry normalization EXACTLY
+  // (filter non-empty strings, path.resolve-normalize, Set-dedup) so an
+  // externally-written registry.json carrying an un-normalized existing root
+  // (e.g. a trailing "/./" segment) can never cause a duplicate entry here.
+  const existingRoots = [
+    ...new Set(rawRoots.filter(r => typeof r === "string" && r.trim().length > 0).map(r => path.resolve(r))),
+  ];
+  const normalized = path.resolve(root);
+  if (existingRoots.includes(normalized)) return; // already registered — idempotent no-op, no write
+  writeJsonAtomic(file, { version: 1, roots: [...existingRoots, normalized], updated_at: nowIso() });
+}
+
+/**
+ * Router auto-start step. Wrapped in its OWN try/catch so any failure here is
+ * swallowed and can NEVER affect the router's emitted additionalContext block.
+ */
+function runAutoStart(input) {
+  try {
+    const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd : process.cwd();
+    const homeDir = catHarnessHomeDir();
+
+    // Project auto-registration: gated on `.cat` already existing for this
+    // root, so a bare `cd` into a fresh, uninitialized repo never adds a
+    // dormant floor with nothing to show (matches the approved plan's
+    // registration-gate rationale).
+    if (fs.existsSync(path.join(cwd, ".cat"))) {
+      upsertProjectRegistry(homeDir, cwd);
+    }
+
+    if (!isServerLocallyLive(homeDir)) {
+      spawnDetachedLauncher(PLUGIN_ROOT);
+    }
+  } catch (error) {
+    warn(`auto-start degraded: ${error && error.message ? error.message : error}`);
+  }
+}
+
 function runRouter(input) {
+  runAutoStart(input);
   let block;
   try {
     block = buildRouterBlock(input);
@@ -692,12 +858,236 @@ function runSkillChainGuard(input, dir) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// G004 dialogue-excerpt capture (PreToolUse[Agent|Task] dispatch half +
+// SubagentStop reply half). PASSIVE ONLY: never emits permissionDecision or
+// additionalContext, never affects the tool call, always fails open. Disk-only
+// — no LLM re-injection. Pairing is FIFO-per-agentType (architect-ratified);
+// `prompt_id`/`promptId` is recorded as metadata only and never drives pairing
+// (per the G001 spike findings — a single n=1 capture cannot rule out
+// prompt_id being shared across concurrent same-turn dispatches).
+// ---------------------------------------------------------------------------
+
+/** Only cat-harness-namespaced subagent/agent types are captured (D-scope). */
+function isNamespacedAgentType(value) {
+  return typeof value === "string" && value.startsWith(DIALOGUE_NAMESPACE_PREFIX) && value.trim().length > DIALOGUE_NAMESPACE_PREFIX.length;
+}
+
+/**
+ * Sentence-boundary-aware excerpt, then hard-truncate to DIALOGUE_EXCERPT_MAX_LEN:
+ * collapse whitespace, take up through the first `.`/`!`/`?` followed by
+ * whitespace-or-end (if any), then hard-cap the result to the max length
+ * regardless of whether a sentence boundary was found.
+ */
+function firstSentenceExcerpt(text, maxLen = DIALOGUE_EXCERPT_MAX_LEN) {
+  const collapsed = String(text ?? "").trim().replace(/\s+/g, " ");
+  if (!collapsed) return "";
+  const boundary = collapsed.match(/[.!?](?=\s|$)/);
+  let candidate = boundary ? collapsed.slice(0, boundary.index + 1) : collapsed;
+  if (candidate.length > maxLen) candidate = candidate.slice(0, maxLen);
+  return candidate.trim();
+}
+
+function dialoguePendingPath(dir) {
+  return path.join(dir, "state", "dialogue-pending.json");
+}
+
+function dialogueExcerptsPath(dir) {
+  return path.join(dir, "state", "dialogue-excerpts.jsonl");
+}
+
+function readDialoguePending(dir) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(dialoguePendingPath(dir), "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {
+    /* missing/corrupt -> fresh queue map */
+  }
+  return {};
+}
+
+/** Bounded FIFO enqueue per agentType (~50-entry cap, oldest evicted first). */
+function enqueueDialoguePending(dir, agentType, record) {
+  const data = readDialoguePending(dir);
+  const queue = Array.isArray(data[agentType]) ? data[agentType] : [];
+  queue.push(record);
+  while (queue.length > DIALOGUE_PENDING_CAP) queue.shift();
+  data[agentType] = queue;
+  writeJsonAtomic(dialoguePendingPath(dir), data);
+}
+
+/** FIFO pop: the OLDEST pending dispatch for this agentType pairs with this reply. */
+function popDialoguePending(dir, agentType) {
+  const data = readDialoguePending(dir);
+  const queue = Array.isArray(data[agentType]) ? data[agentType] : [];
+  if (queue.length === 0) return null;
+  const popped = queue.shift();
+  data[agentType] = queue;
+  writeJsonAtomic(dialoguePendingPath(dir), data);
+  return popped ?? null;
+}
+
+function appendDialogueExcerptLine(dir, entry) {
+  const file = dialogueExcerptsPath(dir);
+  let prev = "";
+  try {
+    prev = fs.readFileSync(file, "utf8");
+  } catch {
+    /* first entry */
+  }
+  writeAtomicRaw(file, `${prev}${JSON.stringify(entry)}\n`);
+}
+
+/**
+ * PreToolUse[Agent|Task] dispatch capture. Isolated from the deny-logic
+ * branches below: tool_name values are mutually exclusive, and this branch
+ * NEVER calls denyPretool/emit — it only enqueues to disk then exits 0.
+ */
+function runDialogueDispatchCapture(input, dir) {
+  try {
+    if (!dir) return process.exit(0);
+    const toolInput = input.tool_input && typeof input.tool_input === "object" ? input.tool_input : {};
+    const agentType = typeof toolInput.subagent_type === "string" ? toolInput.subagent_type.trim() : "";
+    if (!isNamespacedAgentType(agentType)) return process.exit(0);
+    const promptText = typeof toolInput.prompt === "string" ? toolInput.prompt : "";
+    const record = {
+      roundTripId: randomUUID(),
+      agentType,
+      dispatchExcerpt: firstSentenceExcerpt(promptText),
+      dispatchedAt: nowIso(),
+      promptId: typeof input.prompt_id === "string" && input.prompt_id ? input.prompt_id : null,
+    };
+    enqueueDialoguePending(dir, agentType, record);
+  } catch (error) {
+    warn(`dialogue dispatch capture failed (fail open): ${error && error.message ? error.message : error}`);
+  }
+  process.exit(0);
+}
+
+/** Bounded tail-read (last maxBytes of the file), best-effort. */
+function tailReadFile(filePath, maxBytes) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size === 0) return "";
+    const start = Math.max(0, stat.size - maxBytes);
+    const len = stat.size - start;
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, start);
+      return buf.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Best-effort transcript-tail fallback: scan backward for the LAST assistant
+ * message (Claude Code transcript JSONL shape: {type:"assistant",
+ * message:{content:[{type:"text", text:"..."}]}}), joining its text blocks.
+ */
+function lastAssistantTextFromTail(tailText) {
+  if (!tailText) return "";
+  const lines = tailText.split("\n").filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let obj;
+    try {
+      obj = JSON.parse(lines[i]);
+    } catch {
+      continue; // partial line at the tail-read boundary, or unrelated shape
+    }
+    if (!obj || typeof obj !== "object" || obj.type !== "assistant") continue;
+    const content = obj.message && Array.isArray(obj.message.content) ? obj.message.content : null;
+    if (!content) continue;
+    const text = content
+      .filter(block => block && typeof block === "object" && block.type === "text" && typeof block.text === "string")
+      .map(block => block.text)
+      .join(" ")
+      .trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+/**
+ * Reply-source extraction: `last_assistant_message` is primary; a bounded
+ * tail-read of agent_transcript_path (the child's own transcript) then
+ * transcript_path is a fallback ONLY when last_assistant_message is absent.
+ */
+function extractReplyExcerpt(input) {
+  const direct = typeof input.last_assistant_message === "string" ? input.last_assistant_message.trim() : "";
+  if (direct) return firstSentenceExcerpt(direct);
+  for (const candidatePath of [input.agent_transcript_path, input.transcript_path]) {
+    if (typeof candidatePath !== "string" || !candidatePath.trim()) continue;
+    const text = lastAssistantTextFromTail(tailReadFile(candidatePath, DIALOGUE_TRANSCRIPT_TAIL_BYTES));
+    if (text) return firstSentenceExcerpt(text);
+  }
+  return "";
+}
+
+/**
+ * SubagentStop reply capture. Scope-filtered on agent_type; pops the oldest
+ * FIFO pending dispatch for the same agentType. Emits NOTHING to stdout (no
+ * decision, no additionalContext) — disk-only, fail-open on any error.
+ */
+function runSubagentStop(input) {
+  try {
+    const { dir } = sessionOf(input);
+    if (!dir) return process.exit(0);
+    const agentType = typeof input.agent_type === "string" ? input.agent_type.trim() : "";
+    if (!isNamespacedAgentType(agentType)) return process.exit(0);
+    const replyExcerpt = extractReplyExcerpt(input);
+    const repliedAt = nowIso();
+    const promptId = typeof input.prompt_id === "string" && input.prompt_id ? input.prompt_id : null;
+    const popped = popDialoguePending(dir, agentType);
+    if (popped) {
+      const roundTripId = (popped && popped.roundTripId) || randomUUID();
+      appendDialogueExcerptLine(dir, {
+        round_trip_id: roundTripId,
+        role: "dispatch",
+        agent_type: agentType,
+        excerpt: (popped && popped.dispatchExcerpt) || "",
+        ts: (popped && popped.dispatchedAt) || repliedAt,
+        prompt_id: (popped && popped.promptId) ?? null,
+        paired: true,
+      });
+      appendDialogueExcerptLine(dir, {
+        round_trip_id: roundTripId,
+        role: "reply",
+        agent_type: agentType,
+        excerpt: replyExcerpt,
+        ts: repliedAt,
+        prompt_id: promptId,
+        paired: true,
+      });
+    } else {
+      appendDialogueExcerptLine(dir, {
+        round_trip_id: randomUUID(),
+        role: "reply",
+        agent_type: agentType,
+        excerpt: replyExcerpt,
+        ts: repliedAt,
+        prompt_id: promptId,
+        paired: false,
+      });
+    }
+  } catch (error) {
+    warn(`subagentstop dialogue capture failed (fail open): ${error && error.message ? error.message : error}`);
+  }
+  process.exit(0);
+}
+
 function runPretool(input) {
   const toolName = String(input.tool_name ?? "");
   const toolInput = input.tool_input && typeof input.tool_input === "object" ? input.tool_input : {};
   const { cwd, dir } = sessionOf(input);
 
   if (toolName === "Skill") return runSkillChainGuard(input, dir);
+
+  if (toolName === "Agent" || toolName === "Task") return runDialogueDispatchCapture(input, dir);
 
   if (toolName === "Bash") {
     const command = String(toolInput.command ?? "");
@@ -1035,6 +1425,7 @@ async function main() {
   if (!input) process.exit(0);
   if (MODE === "pretool") return runPretool(input);
   if (MODE === "stop") return runStop(input);
+  if (MODE === "subagentstop") return runSubagentStop(input);
   process.exit(0);
 }
 
