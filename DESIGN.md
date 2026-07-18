@@ -17,9 +17,21 @@ come from the gajae-code sources (see "Fidelity sources" at the bottom).
 
 - **4 skills**: `deep-interview`, `ralplan`, `ultragoal`, `team`
 - **4 agents**: `planner`, `architect`, `critic`, `executor`
-- **3 hook events**: `UserPromptSubmit` (router), `PreToolUse` (mutation guard), `Stop` (completion gate)
+- **4 hook events** (narrow, documented exception to "3 hook events" — G004 added `SubagentStop` for
+  passive dialogue-excerpt capture only; it makes no gating decisions): `UserPromptSubmit` (router),
+  `PreToolUse` (mutation guard + G004 dispatch capture), `Stop` (completion gate), `SubagentStop`
+  (G004 reply capture)
 - **1 sanctioned state writer**: `scripts/cat-state.mjs`
 - **4 thin commands** (manual escape hatch): `/cat-harness:interview|plan|execute|team`
+- **Dashboard is OUT-OF-SURFACE infrastructure, not a 5th skill/agent** (`dashboard/`, §10): a
+  monitoring UI + status server layered over the `.cat` state this contract already defines. It never
+  gates or adds a user-facing workflow, and it never touches any project's `.cat/**` at all — it only
+  reads that disk state and renders it. It does hold exactly one narrow, honest exception to
+  read-only: `POST /api/unregister`, a loopback-only endpoint that removes a root from the dashboard's
+  OWN home-directory registry (`~/.cat-harness/registry.json`, never a project's `.cat/**`), symmetric
+  with the hook's existing registration write into that same file (see §10). Adding the dashboard, and
+  this one endpoint, does not change the 4-skill/4-agent count above; it lives alongside them, outside
+  the count.
 
 Lateral-panel personas (researcher / contrarian / simplifier) are prompt fragments inside the
 deep-interview skill run as generic subagents — NOT plugin agents (keeps the 4-agent surface).
@@ -32,8 +44,8 @@ cat-harness/
 │   ├── plugin.json               # name "cat-harness", version (bump every release). Do NOT reference hooks here.
 │   └── marketplace.json          # marketplace name "cat-harness", owner chussum, source "./"
 ├── hooks/
-│   ├── hooks.json                # UserPromptSubmit / PreToolUse (Edit|MultiEdit|Write|NotebookEdit|Bash|Skill) / Stop
-│   └── cat-hook.mjs              # single entry: node cat-hook.mjs <router|pretool|stop>
+│   ├── hooks.json                # UserPromptSubmit / PreToolUse (Edit|MultiEdit|Write|NotebookEdit|Bash|Skill|Agent|Task) / Stop / SubagentStop
+│   └── cat-hook.mjs              # single entry: node cat-hook.mjs <router|pretool|stop|subagentstop>
 ├── scripts/
 │   └── cat-state.mjs             # sanctioned writer + ambiguity floor + receipts (node, zero deps)
 ├── skills/
@@ -49,8 +61,18 @@ cat-harness/
 │   ├── planner.md  ├── architect.md  ├── critic.md  └── executor.md
 ├── commands/
 │   ├── interview.md  ├── plan.md  ├── execute.md  └── team.md
+├── dashboard/                     # OUT-OF-SURFACE infra (§1) — status server + monitoring UI
+│   ├── server/                    # zero-dep Node status server + SSE (§10)
+│   └── app/                       # Vite/React/FSD dashboard UI — the ONE build-time npm-dep
+│                                   # surface (§9); README.md documents layout + dist regen
 └── README.md
 ```
+
+Dashboard runtime state does NOT live under this repo or any project's `.cat/`: it lives
+EXTERNALLY, under the user's home directory (`~/.cat-harness/`, override `CAT_HARNESS_HOME`) —
+`registry.json` (known project roots) and `server.json` (the live server's discovery record). See
+§10 for the full shape. This is a deliberate separation: `.cat/` stays per-project and
+git-ignorable; `~/.cat-harness/` is global, cross-project, and never committed.
 
 hooks.json command form: `node "${CLAUDE_PLUGIN_ROOT}/hooks/cat-hook.mjs" <mode>` (node required; document in README).
 
@@ -65,11 +87,34 @@ Root: `<project cwd>/.cat/` — runtime-owned. Session tree:
     ├── .session-activity.json                   # activity marker v2 (schema below), touched on every mutation
     ├── state/{skill}-state.json                 # per-skill mode state (envelope below)
     ├── state/audit.jsonl                        # append-only audit (nudges, invalid transitions, guard denials)
+    ├── state/dialogue-pending.json              # G004: bounded FIFO per agentType, dispatch awaiting a reply
+    ├── state/dialogue-excerpts.jsonl            # G004: append-only dispatch/reply excerpt pairs (round_trip_id)
     ├── specs/deep-interview-{slug}.md           # interview spec, header `status: pending-approval`
     ├── plans/ralplan/{run-id}/stage-{NN}-{stage}.md
     ├── plans/ralplan/{run-id}/index.jsonl       # {stage, stage_n, path, created_at, sha256} append-only, sha-dedup
     ├── plans/ralplan/{run-id}/pending-approval.md
     └── ultragoal/{brief.md, goals.json, ledger.jsonl}
+```
+
+G004 dialogue-capture shapes (hook-internal writer; §4's `dialogue append` CLI subcommand is the
+alternative sanctioned path for the second one):
+
+`state/dialogue-pending.json` — bounded FIFO array keyed per `agentType` (camelCase; hook-internal
+record, popped and discarded once paired — never read by anything else):
+
+```json
+{ "cat-harness:executor": [ { "roundTripId": "uuid", "agentType": "cat-harness:executor", "dispatchExcerpt": "...", "dispatchedAt": "ISO8601", "promptId": "uuid|null" } ] }
+```
+
+`state/dialogue-excerpts.jsonl` — append-only, one JSON object per line, snake_case (matches the
+rest of the on-disk JSON convention, §9): `round_trip_id` (shared by a paired dispatch+reply),
+`role` (`"dispatch"|"reply"`), `agent_type`, `excerpt` (≤140 chars), `ts` (ISO8601), `prompt_id`
+(metadata-only, may be `null`), `paired` (`true` when a FIFO match was found, `false` for an
+unmatched reply):
+
+```json
+{"round_trip_id":"uuid","role":"dispatch","agent_type":"cat-harness:executor","excerpt":"...","ts":"ISO8601","prompt_id":"uuid|null","paired":true}
+{"round_trip_id":"uuid","role":"reply","agent_type":"cat-harness:executor","excerpt":"...","ts":"ISO8601","prompt_id":"uuid|null","paired":true}
 ```
 
 Activity marker schema v2 (`.session-activity.json`):
@@ -150,6 +195,9 @@ goal checkpoint --goal GNNN --status <s> [--quality-gate-json <path|->]
                                           # PNG/JPEG magic), else exit 2 with reason. Mints receipt
                                           # {plan_generation_sha256, quality_gate_sha256, ledger_event_id, verified_at}
 ledger append --json <str|->              # append-only ledger.jsonl event
+dialogue append --json <str|->            # G004: append-only state/dialogue-excerpts.jsonl row
+                                          # (role: "dispatch"|"reply"); CLI-accessible sibling of the
+                                          # hook's own sanctioned inline writes (§5)
 floor                                     # recompute deep-interview deterministic floor, print {floor, parts}
 receipt verify --goal GNNN                # freshness: receipt exists, anchored ledger row exists, hashes match,
                                           # goal row untouched since verified_at; exit 2 on stale/tampered
@@ -216,7 +264,7 @@ scope-risk `/migration|security|breaking change|data loss|마이그레이션|보
 auto-pass signals = file paths, `#\d+` issue refs, camelCase/snake_case symbols, numbered lists,
 code fences, error/stack traces (their presence suggests ladder 1/3/4 over 2).
 
-### `pretool` (PreToolUse, matcher `Edit|MultiEdit|Write|NotebookEdit|Bash|Skill`)
+### `pretool` (PreToolUse, matcher `Edit|MultiEdit|Write|NotebookEdit|Bash|Skill|Agent|Task`)
 Read active states. Blocking phases: deep-interview `interviewing`; ralplan `planner|review|revision|post-interview|adr|final`;
 ultragoal `goal-planning`; team `starting`. While blocking:
 - **Edit/Write/NotebookEdit**: deny (`permissionDecision:"deny"` + phase-boundary reason) UNLESS target
@@ -227,7 +275,60 @@ ultragoal `goal-planning`; team `starting`. While blocking:
   containing `open(|writeFile|\.write(`, heredocs writing files, `git apply|patch`).
 - **Skill**: chain guard — deny invoking a DIFFERENT cat-harness skill while the active one's phase is
   not `handoff` or terminal ("finish or hand off {skill} first"). Same-skill re-invocation allowed.
+- **Agent/Task** (G004, additive — see the dedicated subsection below): PASSIVE dialogue-dispatch
+  capture only. Placed immediately after the Skill branch (`tool_name` values are mutually exclusive,
+  so this is provably isolated from the deny-logic above). Never emits `permissionDecision` — always
+  falls through to exit 0 either way.
 G1 protection of `.cat` state files applies even with no active workflow. Corrupt state → fail open (log).
+
+### G004 dialogue-excerpt capture (`PreToolUse[Agent|Task]` dispatch half + `SubagentStop` reply half)
+Passive, disk-only, best-effort capture of the prose exchanged with cat-harness's own subagents —
+NEVER a gating decision, NEVER re-injected as additionalContext, NEVER affects the tool call. Scope is
+namespaced `subagent_type`/`agent_type` values only (`cat-harness:planner|architect|critic|executor`);
+`general-purpose` and any other non-namespaced dispatch is skipped silently.
+
+- **Dispatch half** (`pretool`, `tool_name ∈ {Agent, Task}`): reads `tool_input.prompt` (dispatch prose)
+  and `tool_input.subagent_type` (scope key). Extracts a ≤140-char excerpt — sentence-boundary aware
+  (up through the first `.`/`!`/`?`), then hard-truncated regardless — and enqueues
+  `{roundTripId, agentType, dispatchExcerpt, dispatchedAt, promptId}` onto a bounded FIFO queue per
+  `agentType` in `state/dialogue-pending.json` (~50-entry cap, oldest evicted first). `prompt_id` is
+  carried as `promptId` metadata only — see the pairing-strategy note below.
+- **Reply half** (`subagentstop`, new mode): reads `agent_type` (scope key) and extracts the same
+  ≤140-char excerpt from `last_assistant_message` (primary); if absent, a bounded tail-read
+  (16 KiB) of `agent_transcript_path` then `transcript_path` is a fallback-only source, scanning
+  backward for the last `{type:"assistant", message:{content:[{type:"text", text}]}}` entry.
+  **Pops the OLDEST pending entry for the same `agentType`** (FIFO) from `state/dialogue-pending.json`
+  and appends to `state/dialogue-excerpts.jsonl`: on a match, TWO lines sharing one `round_trip_id`
+  (`{role:"dispatch",...}` then `{role:"reply",...}`, both `paired:true`); on no match (empty queue),
+  ONE `{role:"reply",...,paired:false}` line. Emits NOTHING to stdout — no `decision`, no
+  `additionalContext` — under any outcome, including errors (fail-open).
+- **Pairing strategy (architect-ratified, G001 spike)**: FIFO-per-`agentType` is PRIMARY. `prompt_id`
+  is recorded as metadata only and never drives pairing — a single sequential (n=1) capture cannot
+  rule out `prompt_id` being shared across concurrent same-turn dispatches of the same `agentType`,
+  which would make it unsafe as a pairing key. Known accepted degradation: under out-of-order
+  completion of ≥2 concurrent same-`agentType` subagents, FIFO pairs the oldest pending dispatch with
+  whichever reply arrives first — a cosmetic mispair (both halves are still recorded; only the
+  cross-linking is wrong). `prompt_id` may be promoted to primary in a future goal if a concurrent-
+  dispatch capture proves it unique-per-dispatch.
+- **G001 spike verification (SPIKE-CONFIRMED, not assumed)**: a live capture
+  (`.cat/_session-0e700c4d-16ed-43e7-9ab7-b4447bcda067/ultragoal/artifacts/phase2-spike-findings.md`)
+  confirmed `session_id` and `cwd` are both present, and IDENTICAL, on the dispatching
+  `PreToolUse[Agent]` payload and its paired `SubagentStop` payload — both resolve via `sessionOf()`
+  to the SAME `.cat/_session-*` dir (**same-session-dir resolution: PASS**), so FIFO dispatch↔reply
+  pairing writes to the correct tree rather than assuming it. The subagent's OWN identity
+  (`agent_id`/`agent_type`) travels separately in the SubagentStop payload and is what scopes the
+  FIFO queue; the session identity (`session_id`/`cwd`) is always the LEADER's. This reconfirms the
+  disk-only guarantee above (capture never round-trips back into an LLM prompt) and the
+  cat-harness-namespace scope (only `cat-harness:planner|architect|critic|executor` `agent_type`/
+  `subagent_type` values are captured; `general-purpose` and other subagents are invisible to G004).
+  Separately, the plan's F11 ambiguity ("왕복 첫 문장" / "round-trip first sentence") was resolved
+  user-side as **BOTH halves** (Intent Reconciliation, `pending-approval.md`) — capturing the
+  leader's dispatch excerpt AND the subagent's reply excerpt, not just one side — which is why this
+  subsection has a dispatch half and a reply half at all.
+- **Writer policy**: `state/dialogue-pending.json` and `state/dialogue-excerpts.jsonl` live under
+  `state/**`, so G1 auto-protects them from AGENT mutation tools. The hook's own inline writes (atomic
+  tmp+rename, mirroring `audit.jsonl`'s append pattern) are sanctioned, as is the CLI's
+  `dialogue append --json <str|->` subcommand (§4) — an alternative append-only path for the same file.
 
 ### `stop` (Stop)
 If any skill state `active:true` and `current_phase ∉ STOP_RELEASING_PHASES` → `{decision:"block", reason}`
@@ -303,8 +404,11 @@ show the working remediation invocation (the exact deactivation `state write` co
   asked once), run goal-scoped design verification (policy extraction → Figma↔implementation mapping →
   Playwright capture at design breakpoints → computed-style comparison → severity-classified gaps).
   Unresolved Critical/Major gaps are completion blockers; findings/artifacts feed `qa.evidence`/`qa.artifacts`.
-  Requires Playwright MCP (degrades to inspection-only with an explicit evidence note); Figma MCP
-  preferred, REST-token or screenshot fallback. Test-case generation / reports / Jira are OUT of scope
+  A user-provided design source is captured VERBATIM through deep-interview → ralplan → ultragoal (never
+  dropped). When a design source is present but its capture tool (Figma/Playwright MCP, or the
+  claude-in-chrome path) is not connected, the lane **FAILS CLOSED** — it emits a `qa.blocker` and nudges
+  the user to connect the MCP (or explicitly waive), rather than silently degrading to inspection-only and
+  passing. Only a genuinely absent design source skips the lane. Test-case generation / reports / Jira are OUT of scope
   (the standalone Zigzag_web_QA skill covers those). Surface stays 4-skill: this is a reference fragment.
 - All goals terminal → phase `complete`; report receipts summary (never claim done without `receipt verify`).
 
@@ -352,7 +456,153 @@ orchestrator via artifact paths (see §6), never inline dumps of plan bodies.
   options are labeled by outcome, not mechanism. Simplify the language, never the decision.
 - All JSON written by hooks/CLI: 2-space indent, trailing newline. All timestamps ISO8601 UTC.
 - Never `console.log` debug noise from hooks (stdout is the contract). Errors → stderr + audit.jsonl.
-- Version 0.2.0 everywhere — bump on every released change (the plugin cache is keyed by version; same-version pushes may not reach installed users).
+- **Zero-dependency runtime, ONE deliberate build-time exception**: `hooks/`, `scripts/`, and
+  `dashboard/server/` are pure Node builtins — no `npm install` is ever required to run the plugin
+  or the status server. `dashboard/app/` (the Vite/React/FSD dashboard UI, §10) is the SOLE
+  npm-dependency surface in the repo, and it is build-time only: its compiled `dist/` is committed
+  to git so end users never run `npm install`/`npm run build` themselves
+  (`dashboard/server/server.mjs` serves the committed `dist/` directly). Drift between the
+  committed `dist/` and current `src/` is caught by `dashboard/app/scripts/check-dist-drift.mjs`
+  (`npm run check-dist-drift`), which rebuilds into a scratch temp dir with the same
+  `tsc -b && vite build` command and byte-diffs it against the committed `dist/` — the check itself
+  is Node builtins only, so verifying the exception adds no new dependency. Rebuild/verify with
+  Node ≥ 20.19 (Vite 8's floor) or the pinned toolchain: an older Node can emit a byte-different
+  bundle and trip a drift false-positive. This affects contributors regenerating `dist/` only —
+  end users just serve the committed static `dist/` and never rebuild.
+- Version 0.3.0 everywhere — bump on every released change (the plugin cache is keyed by version; same-version pushes may not reach installed users).
+
+## 10. Dashboard & Status Server Contract (`dashboard/server/`, `~/.cat-harness/`)
+
+A single global, stateless, singleton Node status server (Node builtins only — no runtime deps) that
+discovers every registered project's `.cat` tree and serves it over HTTP + SSE to the tycoon dashboard.
+Disk is the sole source of truth: the server holds no authoritative in-memory state, it rebuilds by
+rescanning `~/.cat-harness/**` and each registered root's `.cat/**` on boot and on every fresh
+full-snapshot request. This section is additive to DESIGN.md's existing per-project `.cat` state
+contract (§3) — it documents the NEW global, cross-project runtime directory the dashboard subsystem
+introduces outside any single project.
+
+**Home directory** (`~/.cat-harness/`, override via `CAT_HARNESS_HOME`):
+- `registry.json` — `{ version: 1, roots: ["/abs/project/a", ...], updated_at: ISO8601 }`. Atomic
+  tmp+rename write (`dashboard/server/registry.mjs`'s `upsertRegistryRoot`, mirrored inline in
+  `hooks/cat-hook.mjs`'s router step). Roots are added only once a project's `.cat` directory already
+  exists (registration gate — a bare `cd` into a fresh, uninitialized repo never adds a dormant floor).
+  A dedicated `fs.watch` on this file (`watcher.mjs`) reconciles added/removed roots into the live
+  per-project watcher set with no server restart.
+- `server.json` — `{ port, pid, token, boot_nonce, started_at }`. Written **only** after the server's
+  own `listen()` call has already succeeded (never speculatively — a failed bind can never masquerade
+  as live). `boot_nonce` (`crypto.randomUUID()`) + `started_at` make the singleton lifecycle race-safe
+  (see Singleton lifecycle below).
+- `launcher.log` — append-only JSONL, one structured line per launcher decision (`already_healthy`,
+  `stale_discovery_file`, `started`, `bind_failed`, `bind_failed_foreign_port_owner`). Diagnostic only,
+  never read by the server or hook.
+
+**Port, token, idle shutdown** (`dashboard/server/constants.mjs`):
+- Fixed default port **9223** (`DEFAULT_PORT`), override via `CAT_HARNESS_PORT`. Chosen adjacent to,
+  and specifically to avoid, port 9222 (Chrome DevTools/Playwright/agent-browser remote debugging),
+  which under the no-fallback rule below would otherwise silently fail to bind whenever Chrome remote
+  debugging is active on the same machine. **No automatic port fallback ever** — a bind failure is a
+  hard, logged failure (F16); `CAT_HARNESS_PORT` is an explicit, non-automatic escape hatch, never an
+  automatic retry.
+- A random per-boot health token (`generateToken()`, 24 random bytes hex) gates `/healthz` only.
+  `/api/snapshot` and `/api/stream` are intentionally unauthenticated — the server binds to
+  `127.0.0.1` only, so the loopback boundary is the actual access control for read-only dashboard data;
+  the token exists solely to let the launcher/hook prove liveness, not to gate general API access.
+- Idle auto-shutdown after 30 minutes of no request/SSE activity (`DEFAULT_IDLE_MS`, override via
+  `CAT_HARNESS_IDLE_MS`, `<= 0` disables it — test-only escape hatch).
+
+**The one mutating endpoint — `POST /api/unregister` (`dashboard/server/server.mjs`,
+`dashboard/server/registry.mjs`'s `removeRegistryRoot`)**: the server is honest about no longer being
+*strictly* read-only, but the mutation this endpoint performs is narrow and symmetric with the hook's
+own existing registration write. It is the real, server-side "폐업 처리" (close/retire a dormant
+floor) — replacing an earlier client-side-only localStorage hide that never touched disk. Body
+`{ "root": "<projectRoot>" }`; removes that root from `~/.cat-harness/registry.json`
+(resolved-path compare, atomic tmp+rename, mirroring `upsertRegistryRoot`) — a root that isn't present,
+or a missing registry.json, is a no-op success, never an error. **Loopback-only, strictly**: on top of
+the server's existing `listen(port, "127.0.0.1")` bind, the handler independently checks
+`isLoopbackAddress(req.socket.remoteAddress)` and rejects (403) anything else — defense in depth
+specifically because, unlike `/api/snapshot`/`/api/stream`, this one writes to disk. A malformed or
+non-object body (unparseable JSON, missing/non-string `root`) is a 400, never a crash. On success the
+response carries `{ ok: true, snapshot }` (the already-updated fresh snapshot), and the server also
+broadcasts a `removed` SSE event (`sse.mjs`'s `broadcastRemoved`, `{ root }`) so every OTHER
+already-connected dashboard client drops that floor immediately too — the drop counterpart to the
+existing per-project `delta` broadcast, added because a registry removal previously had no live-client
+notification at all (silently correct only for a client's *next* full reconnect). A project reappears
+automatically the moment its hook re-registers it (its `.cat` directory already existing is the
+existing registration gate above) — there is deliberately no separate "restore" affordance anymore.
+
+**Singleton lifecycle (compare-and-delete, `dashboard/server/singleton.mjs`)**: on graceful or idle
+shutdown, the server re-reads `server.json` fresh from disk immediately before unlinking and deletes it
+**only** on an exact `pid` AND `boot_nonce` match against its own in-memory identity. A mismatch (a
+newer instance already overwrote the file) skips the unlink and logs — an old instance's shutdown can
+never delete a newer instance's live discovery file.
+
+**Auto-start (router hook → detached launcher, G003, `hooks/cat-hook.mjs` + `dashboard/server/launcher.mjs`)**:
+1. On every `UserPromptSubmit`, the router does a **cheap, local, synchronous** liveness pre-check —
+   `fs.readFileSync` + `process.kill(pid, 0)` (never signals; throws if no such process) **plus** a
+   well-formed `boot_nonce` shape check — wrapped in its own try/catch, fully isolated from the
+   router's emitted `additionalContext` block. It also upserts the current project root into
+   `registry.json` (gated on `.cat` already existing). Neither step ever performs network I/O — Node
+   has no synchronous HTTP client, and the hook stays on its existing fast/fail-open budget.
+2. If the pre-check finds the discovery file missing, stale (dead pid), or malformed, the router
+   spawns `dashboard/server/launcher.mjs` **detached and `unref()`'d** and returns immediately —
+   the spawn cost is paid once per cold start/idle cycle, not per prompt.
+3. The launcher (a separate process, off the hook's timing budget) is the **only** place allowed to
+   make the authoritative network call: an HTTP GET to `http://127.0.0.1:<port>/healthz?token=<token>`
+   against whatever `server.json` currently says. A healthy `200 {ok:true}` response means a live
+   cat-harness server already exists — the launcher exits without starting a second one. Any other
+   outcome (no discovery file, connection refused, timeout, bad token, malformed body) is treated as
+   unhealthy, and the launcher starts a fresh server in-process (reusing `dashboard/server/server.mjs`),
+   becoming the running server itself (mirrors `dashboard/server/index.mjs`'s own SIGINT/SIGTERM
+   handling) once `listen()` succeeds.
+4. **No port fallback (F16).** If starting a fresh server hits `EADDRINUSE`, the probe above has
+   already ruled out a *healthy* cat-harness instance holding that port — so whatever is bound there
+   is a foreign occupant (or an unhealthy one). The launcher logs one structured
+   `bind_failed_foreign_port_owner` line to `launcher.log`, calls `shutdown()` to release its watcher,
+   and exits cleanly. It never retries another port and never lets the failure surface as a hook error
+   (the router already returned long before the launcher even started).
+
+**PID-reuse posture (advisory pre-check, accepted residual risk)**: the router's sync liveness
+pre-check is **advisory only**, never authoritative. `process.kill(pid, 0)` can succeed not because the
+original server is alive, but because the OS reassigned that exact pid to an unrelated process after
+the real server died — the hook would then wrongly conclude "alive" and never spawn a launcher. The
+`boot_nonce` shape check narrows this (rules out missing/corrupt/stale-format `server.json`), but the
+narrower case of a *reused pid* whose `server.json` content still happens to parse as well-formed
+remains a real, if rare, residual edge (large pid space on macOS makes near-term reuse uncommon). This
+is accepted rather than engineered away with a network probe in the hot hook path (which would
+reintroduce exactly the network-in-hook risk F16/the hook contract forbids) — the launcher's own
+health-token probe is the actual source of truth and self-corrects any false positive that reaches it:
+a foreign process squatting on a reused pid does not know the token in `server.json`, so the probe
+fails and the launcher starts a fresh server. **Operator remedy** for the vanishingly rare case where
+even the token happens to still validate (or the launcher itself cannot reach the port): delete
+`~/.cat-harness/server.json` — the next hook call relaunches cleanly.
+
+**Watch / debounce / SSE contract** (`watcher.mjs`, `sse.mjs`, F17 — no polling, ever): one
+`fs.watch({recursive:true})` per registered project's `.cat` directory, plus a dedicated watch on the
+home `registry.json`. Any event (including ordinary atomic tmp+rename writes) is treated only as a
+trigger for a full, coarse re-read — never byte-level diffing — debounced 100-200ms
+(`WATCH_DEBOUNCE_MS`) so a rapid multi-file write burst coalesces into one re-read. `/api/stream`
+sends a full snapshot on every (re)connect (rebuilt fresh from disk, never replayed in-memory state —
+F18-style guarantee: a missed watch event self-heals on the next reconnect), then `delta` events
+afterward as a per-changed-project full resend, and `removed` events (`{ root }`) when a project drops
+out of the registry — most directly via `POST /api/unregister` above, which broadcasts its own removal
+synchronously rather than waiting on the debounced registry watch, though a root removed by any other
+means (e.g. `registry.json` hand-edited) is still caught and broadcast the same way once the watch
+fires. SSE connection presence and requests both count as activity for the idle timer.
+
+**MCP-friendly JSON note**: `dashboard/server/snapshot.mjs`'s `buildSnapshot`/`buildProjectSnapshot`
+output (`{schemaVersion, generatedAt, projects: [{root, lit, sessions: [...]}]}`) is plain,
+stable-keyed, function-free JSON by construction — safe for a future MCP bridge to consume unchanged.
+No MCP server or bridge is implemented by this contract; the shape is designed to already be that
+friendly on day one.
+
+**Dashboard UI structure (`dashboard/app/`, Feature-Sliced Design slice map)**: `shared/` (SSE
+client + TS types mirroring the server's snapshot shape, `cn()` class-merge helper, shadcn/ui-style
+primitives) → `entities/` (`project`, `floor`, `cat` — pure snapshot→model mappings plus
+presentational rendering) → `features/` (`floor-inspect`, `cat-inspect`, `scene-controls`) →
+`widgets/` (`office-scene` the building + cats + speech bubbles, `side-panel` goals/phases/
+receipts/dialogue timeline, `floor-list` quick-jump nav) → `pages/dashboard` (composition root).
+This is the build-time npm-dependency surface described in §9; see `dashboard/app/README.md` for
+the full layout, the committed-`dist`/drift-check mechanism, and asset provenance.
 
 ## Fidelity sources (read before writing)
 
