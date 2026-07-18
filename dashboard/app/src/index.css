@@ -1,0 +1,206 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  background: #0b0c10;
+  color: #e4e4e7;
+  image-rendering: pixelated;
+}
+
+/* Pixel-cat office scene animations (self-authored, no external assets). */
+@keyframes cat-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+/* Busy cats get a quicker in-place scurry; their actual movement around the
+   room comes from entities/cat/useWander.ts animating left/top, not this. */
+@keyframes cat-scurry {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+/* The ACTIVE (working) seated worker cat's "busily typing" bob (entities/cat/ui.tsx's
+   `seated` prop, when NOT `sleeping`) — fast and visibly bigger than the old
+   subtle twitch, plus a small paw-like tilt each half-beat, so the one cat
+   that's actually working reads as clearly, energetically busy next to its
+   napping desk-mates. Still much smaller than cat-scurry's whole-body
+   movement since the cat isn't roaming, just working at its desk. */
+@keyframes cat-type {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-2px) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(0) rotate(0deg);
+  }
+  75% {
+    transform: translateY(-2px) rotate(3deg);
+  }
+}
+
+/* A sleeping seated worker's floating "Zzz" mark (entities/cat/ui.tsx's
+   `sleeping` prop) — a slow, gentle drift/fade so it reads as breathing,
+   not busy motion. */
+@keyframes zzz-float {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.7;
+  }
+  50% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+@keyframes toy-sway {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) rotate(-4deg);
+  }
+  50% {
+    transform: translate(-50%, -50%) rotate(4deg);
+  }
+}
+
+/* The active (typing) worker's toy prop (entities/floor/Toy.tsx's `playing`
+   prop) — a quicker, wider bat/paw-swat motion than the ambient `toy-sway`,
+   so it reads as the busy cat multitasking with a toy rather than the toy
+   just idly swaying on its own. */
+@keyframes toy-bat {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) rotate(-16deg) translateX(-1px);
+  }
+  50% {
+    transform: translate(-50%, -50%) rotate(16deg) translateX(1px);
+  }
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes window-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  94% {
+    opacity: 0.6;
+  }
+  96% {
+    opacity: 1;
+  }
+}
+
+.animate-cat-bob {
+  animation: cat-bob 1.4s ease-in-out infinite;
+}
+
+.animate-cat-scurry {
+  animation: cat-scurry 0.5s ease-in-out infinite;
+}
+
+.animate-cat-type {
+  animation: cat-type 0.35s ease-in-out infinite;
+}
+
+.animate-zzz-float {
+  animation: zzz-float 2.2s ease-in-out infinite;
+}
+
+.animate-bubble-in {
+  animation: bubble-in 0.18s ease-out;
+}
+
+.animate-window-flicker {
+  animation: window-flicker 5s linear infinite;
+}
+
+.animate-toy-sway {
+  animation: toy-sway 2.6s ease-in-out infinite;
+}
+
+.animate-toy-bat {
+  animation: toy-bat 0.5s ease-in-out infinite;
+}
+
+/* A cat's absolutely-positioned room slot (left/top drift toward its next
+   wander target — see entities/cat/useWander.ts) gets this class so
+   prefers-reduced-motion can kill the drift specifically, below. A long,
+   gentle glide (paired with the longer retarget interval in useWander.ts)
+   so cats amble calmly instead of darting around the room. */
+.cat-wander-slot {
+  transition:
+    left 3.6s ease-in-out,
+    top 3.6s ease-in-out;
+}
+
+/* A speech bubble's body/tail (entities/floor/ui.tsx) are room-anchored
+   elements, siblings of the cat rather than nested inside it (so their CSS
+   `left: clamp(...)` resolves room-relative % against the room's own
+   width — see entities/cat/wander.ts's `bubbleBodyLeftCss`/
+   `bubbleTailLeftCss` — instead of the cat's own tiny wandering-slot
+   width). They share this same transition duration/easing as
+   .cat-wander-slot so, even as separate elements, they glide in lockstep
+   with the cat they belong to — both driven by the same live position. */
+.bubble-slot {
+  transition:
+    left 3.6s ease-in-out,
+    top 3.6s ease-in-out,
+    bottom 3.6s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-cat-bob,
+  .animate-cat-scurry,
+  .animate-cat-type,
+  .animate-zzz-float,
+  .animate-window-flicker,
+  .animate-toy-sway,
+  .animate-toy-bat,
+  .animate-bubble-in {
+    animation: none;
+  }
+
+  .cat-wander-slot,
+  .bubble-slot {
+    transition: none !important;
+  }
+}
