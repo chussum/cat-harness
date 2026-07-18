@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/Card'
 import { projectDisplayName } from '@/entities/project/model'
 import { useI18n, type I18nContextValue } from '@/shared/i18n/LanguageProvider'
 import { whoToWhomLabel } from '@/shared/lib/agentLabel'
+import { formatLocalTs } from '@/shared/lib/formatTs'
 import type { Goal, ProjectSnapshot } from '@/shared/api/types'
 import { buildDialogueTimeline, buildProjectPanelData, type SessionPanelData, type TimelineEntry } from './model'
 import { dialogueInWindow, goalWindows, ledgerForGoal } from './goalWindow'
@@ -125,7 +126,7 @@ function GoalDetail({ session, goal, highlightRoundTripId, onBack, t }: GoalDeta
         <ul className="space-y-1 font-mono text-[11px] text-zinc-400">
           {events.map((entry) => (
             <li key={entry.event_id} className="truncate">
-              {entry.ts} {entry.event}
+              {formatLocalTs(entry.ts)} {entry.event}
             </li>
           ))}
         </ul>
@@ -233,7 +234,7 @@ function SessionCard({ session, highlightRoundTripId, t }: SessionCardProps) {
               <ul className="space-y-1 font-mono text-[11px] text-zinc-400">
                 {session.ledgerTail.map((entry) => (
                   <li key={entry.event_id} className="truncate">
-                    {entry.ts} {entry.event} {entry.goal ?? entry.goal_id ?? ''}
+                    {formatLocalTs(entry.ts)} {entry.event} {entry.goal ?? entry.goal_id ?? ''}
                   </li>
                 ))}
               </ul>
