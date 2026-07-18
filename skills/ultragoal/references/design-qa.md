@@ -100,12 +100,43 @@ capture, so I concluded from those."* That is a silent pass, and it is forbidden
   the byte floor. Before listing an implementation screenshot as evidence, confirm it actually shows
   the intended component (the mapped root selector rendered with content), not a blank/error/loading
   frame. If unsure it is the real component, it is a failed capture.
+- **Loaded content, not placeholders (the exact recurring miss).** If the surface has images/thumbnails/
+  media/async data, the capture is only valid once that content has ACTUALLY LOADED. A gray placeholder,
+  a broken-image icon, a skeleton, or an unresolved mock image is a FAILED capture, not something to
+  "compare as-is" — you cannot verify a thumbnail's aspect-ratio/object-fit/radius/gap against the
+  design when the image never rendered. Before accepting the screenshot, assert with `browser_evaluate`
+  that every in-scope `<img>` is loaded (`img.complete === true && img.naturalWidth > 0`) and any
+  background-image/canvas actually painted; poll/wait and retry until they are, or block. Never verify
+  an image-dependent component against placeholder boxes.
+
+**Capture surface — verify what SHIPS, with real content:**
+- For a component that depends on real data or images (thumbnails, media cards, lists, avatars), prefer
+  capturing it in the **running app on its real route with real or seeded data** over a Storybook/mock
+  story whose fixtures don't load. A story that renders gray placeholder images is NOT a valid design-QA
+  surface for those elements — it verifies a broken render. If you must use a story, use one whose images
+  actually resolve (real fixture URLs), and apply the loaded-content assertion above.
+- Note in `qa.evidence` which surface was captured (real route vs story) and that its content was loaded.
+
+**claude-in-chrome / Playwright stabilization (flaky browser is expected — stabilize, don't skip):**
+- Before every screenshot: navigate, then wait for `load`/network-idle AND poll until the target
+  selector exists and its images report loaded (above). Only then capture. Do not screenshot mid-load.
+- If the browser/extension is unstable (disconnects, hangs, returns blank), retry per the protocol, then
+  switch capture paths (claude-in-chrome ⇄ Playwright MCP). Persistent instability with no clean capture
+  is a blocker (ask the user) — it is NEVER a reason to conclude from the spec + source code.
+
+**Mandatory side-by-side visual diff (catches what numbers can't).** Computed-style numbers alone missed
+real gaps (header alignment, badge shape, thumbnail imagery) in past runs. After capturing, you MUST open
+the AS-IS render and the TO-BE design export together and do an explicit visual comparison, producing a
+**visual-gap list** (alignment, proportion, shape, imagery, overall composition) SEPARATE from the numeric
+diff. A numeric-only pass is not a pass. Treat any visual gap you can see but can't yet put a number to as
+a finding to measure, not something to wave through.
 
 **Pre-verdict self-check (all must be TRUE, or the design dimension is a blocker, not a pass):**
 - [ ] I navigated to the live route and the target component actually rendered (not blank / error / loading).
-- [ ] I captured the AS-IS implementation render on disk and confirmed the PNG shows the real component.
+- [ ] All in-scope images/media/async content actually LOADED in the capture (verified `img.complete && naturalWidth>0`), not gray placeholders.
+- [ ] I captured the AS-IS implementation render on disk and confirmed the PNG shows the real component with real content.
 - [ ] I exported the mapped TO-BE Figma frame/node on disk (or used the provided design image in fallback mode).
-- [ ] I opened BOTH images and visually compared them as an AS-IS | TO-BE pair.
+- [ ] I opened BOTH images and did an explicit side-by-side VISUAL comparison, recording a visual-gap list — not only a numeric diff.
 - [ ] Every numeric claim in the findings came from `browser_evaluate` on the LIVE DOM — none from reading source code or from the design guide alone.
 
 If any box is unchecked, the design dimension is `not-verified` and a `qa.blockers` entry is emitted —
@@ -143,7 +174,11 @@ target the right element:
 ## Step 3 — Capture & compare (per mapped surface, per breakpoint)
 
 1. `browser_navigate` to the route, then `browser_resize` to the breakpoint width (match the design
-   frame width 1:1 — do not capture at another width and resize after).
+   frame width 1:1 — do not capture at another width and resize after). Then **wait for the surface to
+   fully settle before capturing**: `load`/network-idle, the root selector present, and every in-scope
+   `<img>` loaded (`browser_evaluate`: `img.complete && img.naturalWidth > 0`) — poll/retry until true.
+   Capturing mid-load or with placeholder images is a failed capture (Capture-integrity gate), not a
+   basis for comparison.
 2. Screenshot the surface and save under `.cat/_session-{sid}/ultragoal/artifacts/` as PNG, named
    e.g. `design-{goal}-{surface}-{bp}.png`. Capture at ≥2x (put `zoom:2` on the target element and
    take an element screenshot with the viewport unchanged) so the image is crisp AND clears the gate's
@@ -168,6 +203,14 @@ target the right element:
 5. Use screenshot pixels only to cross-check what computed styles cannot settle: element offsets/
    alignment, icon asset shape/stroke, and near-black effective colors.
 6. Diff each measured value against the Step 1 expected value and classify by the table below.
+7. **Side-by-side visual pass (required, not optional).** Open the AS-IS render and the TO-BE design
+   export together and compare them directly, producing a **visual-gap list** distinct from the numeric
+   diff: overall composition/alignment (is the header/badge/row on the same line and edge as the
+   design?), element proportion and shape, and — for image/thumbnail/media surfaces — the actual
+   rendered imagery (aspect ratio, object-fit/crop, corner radius, inter-tile gap, overlay gradient).
+   These are exactly the gaps computed styles miss. Any visual difference you can see becomes a finding:
+   measure it to assign severity, but never wave it through because the numbers happened to match. A
+   numeric-only comparison is NOT a complete design-QA.
 
 ## Severity classification (ported from the source's priority vocabulary)
 
