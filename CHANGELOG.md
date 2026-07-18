@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.6.0 — Mechanical design-QA gate (2026-07-19)
+
+Closes the incident class where a UI goal was checkpointed `complete` with a
+wrong font-size/spacing because the agent "checked alignment only" and
+self-declared `qa.status: passed`. Three prior prose-only reinforcements
+(0.4.0/0.5.0/0.5.2) could not stop it because the CLI gate only checked
+structural things. This makes the check MECHANICAL.
+
+- **New `qa.design` measurement-matrix gate in `scripts/cat-state.mjs`'s
+  `validateQualityGate`.** When a design source is on record for the goal — a
+  Figma/design URL in the deep-interview spec's `Design Source` line, the
+  approved plan, OR the checkpointed goal's own objective (goalId-scoped, so a
+  sibling goal's URL never false-triggers) — `goal checkpoint --status complete`
+  is REFUSED unless a per-surface/per-property matrix (font-size, line-height,
+  font-weight + spacing, color, geometry) was submitted and is clean. The CLI
+  **recomputes** each property's severity from `figma_expected`/`impl_actual`
+  against `design-qa.md`'s table (ordinal Critical>Major>Minor>Trivial>None) and
+  rejects any self-labeled downgrade or unresolved Critical/Major — so the
+  fix-then-remeasure loop is structurally forced, not self-declared.
+- **Two audited escape hatches, no soft underbelly.** `not_applicable` (no UI:
+  requires no screenshot artifact + substantive reason + nested architect ack);
+  `waived` (a **Major only**, never a Critical; requires `user_acknowledged` and
+  the leader must surface the Major to the user first — the **user**, not the
+  agent/architect, is the waiver authority).
+- **Broadened, non-gameable trigger + user-gated waiver** were the two
+  user-reconciled decisions in the ralplan consensus that produced this
+  (architect CLEAR+APPROVE, critic OKAY).
+- **Doctrine**: `design-qa.md` + `ultragoal/SKILL.md` now emit/require the
+  matrix, enumerate per-variant surfaces (e.g. a card's 1- vs 2-thumbnail
+  layout), and require the leader to STOP-and-ask the user before waiving a
+  Major.
+- **Disclosed residuals** (a zero-dependency CLI cannot solve these; named so the
+  gate is not oversold): fabrication (can't prove a measurement was taken),
+  coverage-floor (can't force the specific wrong element), ack-softness (acks are
+  leader-assembled), chat-only links (a design URL only in chat, never persisted,
+  won't trigger).
+- Additive: a goal with no design source on record is byte-identical to before;
+  full `cat-state.test.mjs` suite green + 24 new gate tests (AC1-AC19 + sibling).
+
 ## 0.5.2 — Search-efficiency + Figma-scoping doctrine (2026-07-18)
 
 Doctrine-only refinements from a run retrospective (no code/dashboard change).

@@ -312,6 +312,18 @@ A goal cannot be checkpointed `complete` until this gate has run, in order:
      REQUIRES a real, on-disk, visually-inspected live render of the running component; reading the code
      is not a substitute. Only genuinely NO design source after asking once → skip the lane
      and note "design verification not applicable" in `qa.evidence`.
+   - **Mechanical `qa.design` gate.** Whenever a design source is on record — in the deep-interview
+     spec, the approved plan, OR the goal brief/objective (broadened trigger: any one of the three, not
+     spec-only) — the sanctioned CLI additionally REQUIRES a complete `qa.design` measurement matrix
+     (`references/design-qa.md`'s Evidence output contract has the exact JSON) and mechanically
+     validates it: submitted `severity` values are NOT trusted — the CLI recomputes severity from
+     `figma_expected`/`impl_actual` per the severity table and rejects the checkpoint if any unresolved
+     Critical or Major remains. There are exactly two hatches, both same-ceremony, never a silent skip:
+     `not_applicable` (only when no screenshot artifact exists and the goal's top-level
+     `architect_review.design_not_applicable_acknowledged` is `true`) for genuinely non-UI
+     design-sourced goals, and `waived` (Major only — a Critical is never waivable — requiring
+     `user_acknowledged: true`, which the leader may set only after using AskUserQuestion to surface
+     the specific Major to the user and getting explicit approval; the agent may never self-waive).
    - CLI: the actual passed command invocations with captured output, re-runnable as stated.
    - API/package/algorithm: a test-report artifact file or the passed test commands covering
      boundary/adversarial cases.
@@ -326,7 +338,10 @@ A goal cannot be checkpointed `complete` until this gate has run, in order:
    `qa.commands` a non-empty array of the passed command invocations (e2e and red-team lanes
    included); `iteration.status` `"passed"` with `full_rerun: true`; every evidence field
    substantive and non-empty; every `qa.artifacts[].path` a real file; every `blockers` array
-   present and empty. `COMMENT`, `WATCH`, `REQUEST CHANGES`, `BLOCK`, missing evidence,
+   present and empty; and `qa.design` (when required by the design-source trigger above) mechanically
+   validated — no unresolved Critical/Major, and any `waived`/`not_applicable` hatch properly
+   ceremonied (user-acknowledged Major-only waiver surfaced to the user first, or architect-acked
+   not_applicable with no screenshot). `COMMENT`, `WATCH`, `REQUEST CHANGES`, `BLOCK`, missing evidence,
    plan/code mismatches, or non-empty blockers are non-clean.
 9. **On any finding**: do NOT checkpoint `complete`. Record review blockers (see blocker goals
    above), resolve them, then rerun the full gate from step 1. Repeat until all lanes are clean.

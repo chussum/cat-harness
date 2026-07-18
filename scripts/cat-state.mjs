@@ -479,8 +479,12 @@ function isScreenshotArtifact(a) {
  * }
  * (architect_verdicts / architect_recommendation / architect_evidence /
  *  architect_blockers accepted as top-level aliases.)
+ *
+ * Signature is (gate, ctx, goalId): projectRoot is derived from ctx.projectRoot,
+ * and when ctx.root is present the design-QA gate is delegated to via ctx+goalId.
  */
-function validateQualityGate(gate, projectRoot) {
+function validateQualityGate(gate, ctx, goalId) {
+  const projectRoot = ctx.projectRoot;
   const errs = [];
   if (!gate || typeof gate !== "object" || Array.isArray(gate)) {
     return ["quality gate must be a JSON object"];
@@ -560,6 +564,465 @@ function validateQualityGate(gate, projectRoot) {
       }
     }
   });
+
+  // Design-QA measurement-matrix gate — fires ONLY when a design source is on
+  // record (spec / approved plan / this goal's brief). No source → no new errs,
+  // so the non-trigger path is behaviorally identical to before this gate.
+  if (ctx && typeof ctx === "object" && ctx.root) {
+    const designSource = findDesignSourceOnRecord(ctx, goalId);
+    if (designSource) {
+      for (const e of validateDesignGate(gate, ctx, goalId, designSource)) errs.push(e);
+    }
+  }
+
+  return errs;
+}
+
+// --------------------------------------------------------- design-QA gate
+
+/** Any http(s) URL; a bare figma.com URL also counts even without a key. */
+const ANY_URL_RE = /https?:\/\/[^\s)<>"'\]]+/i;
+const FIGMA_URL_RE = /https?:\/\/(?:[\w.-]+\.)?figma\.com\/[^\s)<>"'\]]+/i;
+const DESIGN_SOURCE_LINE_RE = /Design Source\s*:\s*(.+)/i;
+
+/** Reject blank / n-a / tbd / dash / unknown / same / similar / approx as a MEASURED value. */
+const PLACEHOLDER_VALUE = /^(|-|–|—|n\/a|na|tbd|unknown|same|similar|approx|approximately)[.!]*$/i;
+
+function isPlaceholderValue(v) {
+  if (v === null || v === undefined) return true;
+  return PLACEHOLDER_VALUE.test(String(v).trim());
+}
+
+function stripHtmlComments(s) {
+  return String(s).replace(/<!--[\s\S]*?-->/g, "");
+}
+
+/** Extract a real design URL from a "Design Source:" line value (not "" / "none"). */
+function designUrlFromDesignSourceLine(text) {
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = DESIGN_SOURCE_LINE_RE.exec(line);
+    if (!m) continue;
+    const val = stripHtmlComments(m[1]).replace(/[{}]/g, "").trim();
+    if (!val || /^(none|n\/a|na|tbd|-|–|—)$/i.test(val)) continue;
+    const um = ANY_URL_RE.exec(val);
+    if (um) return um[0];
+  }
+  return null;
+}
+
+/** A figma URL anywhere, or a keyed Design Source line — used for plan/goal text. */
+function designUrlAnywhere(text) {
+  const fm = FIGMA_URL_RE.exec(String(text));
+  if (fm) return fm[0];
+  return designUrlFromDesignSourceLine(text);
+}
+
+/** Approved-plan artifacts under ctx.root/plans: pending-approval + ralplan finals/revisions. */
+function collectPlanFiles(ctx) {
+  const out = [];
+  const stack = [path.join(ctx.root, "plans")];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) stack.push(full);
+      else if (
+        e.isFile() &&
+        (e.name === "pending-approval.md" ||
+          e.name === "final-adr.md" ||
+          /^stage-.*-(final|revision)\.md$/i.test(e.name))
+      ) {
+        out.push(full);
+      }
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * Return the first recorded design/Figma URL for a checkpointed goal, scanning
+ * in order: (a) this session's specs/*.md "Design Source:" lines; (b) the
+ * approved plan artifacts; (c) the goalId-scoped goal objective/title. Scoped to
+ * ctx.root (cross-session isolation). Value must not be "" / "none". Fails OPEN
+ * (returns null) on any I/O error — a scan failure never blocks a checkpoint.
+ */
+function findDesignSourceOnRecord(ctx, goalId) {
+  try {
+    // (a) deep-interview specs
+    const specsDir = path.join(ctx.root, "specs");
+    let specFiles = [];
+    try {
+      specFiles = fs.readdirSync(specsDir).filter((f) => f.endsWith(".md")).sort();
+    } catch {
+      /* no specs dir — fall through */
+    }
+    for (const f of specFiles) {
+      let txt;
+      try {
+        txt = fs.readFileSync(path.join(specsDir, f), "utf8");
+      } catch {
+        continue;
+      }
+      const url = designUrlFromDesignSourceLine(txt);
+      if (url) return url;
+    }
+
+    // (b) approved plan
+    for (const pf of collectPlanFiles(ctx)) {
+      let txt;
+      try {
+        txt = fs.readFileSync(pf, "utf8");
+      } catch {
+        continue;
+      }
+      const url = designUrlAnywhere(txt);
+      if (url) return url;
+    }
+
+    // (c) this goal's brief (goalId-scoped — a sibling goal's URL must NOT trigger)
+    if (goalId) {
+      const res = readJsonSafe(ultragoalPaths(ctx).goals);
+      if (res.ok && res.value && Array.isArray(res.value.goals)) {
+        const goal = res.value.goals.find((g) => g && g.id === goalId);
+        if (goal) {
+          const txt = [goal.title, goal.objective].filter((s) => typeof s === "string").join("\n");
+          const url = designUrlAnywhere(txt);
+          if (url) return url;
+        }
+      }
+    }
+  } catch {
+    return null; // fail OPEN
+  }
+  return null;
+}
+
+// -- value normalizers (1:1 with skills/ultragoal/references/design-qa.md:226-237)
+
+function byteHex(x) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(255, Math.max(0, Math.round(n))).toString(16).padStart(2, "0");
+}
+
+/** color → normalized 8-digit lowercase hex (rrggbbaa). Accepts #rgb/#rgba/#rrggbb/#rrggbbaa/rgb()/rgba(). */
+function normalizeColor(v) {
+  if (typeof v !== "string") return null;
+  const s = v.trim().toLowerCase();
+  let m = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(s);
+  if (m) {
+    let h = m[1];
+    if (h.length === 3) h = h.split("").map((c) => c + c).join("") + "ff";
+    else if (h.length === 4) h = h.split("").map((c) => c + c).join(""); // #rgba → rrggbbaa
+    else if (h.length === 6) h = h + "ff";
+    return h.toLowerCase();
+  }
+  m = /^rgba?\(\s*([\d.]+)\s*[, ]\s*([\d.]+)\s*[, ]\s*([\d.]+)\s*(?:[,/]\s*([\d.]+%?)\s*)?\)$/i.exec(s);
+  if (m) {
+    const r = byteHex(m[1]);
+    const g = byteHex(m[2]);
+    const b = byteHex(m[3]);
+    if (r === null || g === null || b === null) return null;
+    let a = "ff";
+    if (m[4] !== undefined) {
+      let anum = m[4].endsWith("%") ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+      if (!Number.isFinite(anum)) return null;
+      anum = Math.min(1, Math.max(0, anum));
+      a = Math.round(anum * 255).toString(16).padStart(2, "0");
+    }
+    return r + g + b + a;
+  }
+  return null;
+}
+
+/** length → px number (2dp), rem@16root. "auto" → null; "normal" → 0 only when normalIsZero. */
+function normalizeLength(v, normalIsZero = false) {
+  if (typeof v === "number") return Number.isFinite(v) ? round2(v) : null;
+  if (typeof v !== "string") return null;
+  const s = v.trim().toLowerCase();
+  if (s === "auto") return null;
+  if (s === "normal") return normalIsZero ? 0 : null;
+  let m = /^(-?\d*\.?\d+)px$/.exec(s);
+  if (m) return round2(parseFloat(m[1]));
+  m = /^(-?\d*\.?\d+)rem$/.exec(s);
+  if (m) return round2(parseFloat(m[1]) * 16);
+  m = /^(-?\d*\.?\d+)$/.exec(s);
+  if (m) return round2(parseFloat(m[1]));
+  return null;
+}
+
+/** font-weight → {400,500,700} bucket. */
+function normalizeWeight(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim().toLowerCase();
+  const named = {
+    thin: 100, hairline: 100, extralight: 200, ultralight: 200, light: 300,
+    normal: 400, regular: 400, book: 400, medium: 500, semibold: 600, demibold: 600,
+    bold: 700, extrabold: 800, ultrabold: 800, black: 900, heavy: 900,
+  };
+  let n;
+  if (/^\d+$/.test(s)) n = parseInt(s, 10);
+  else if (named[s] !== undefined) n = named[s];
+  else return null;
+  if (!Number.isFinite(n)) return null;
+  if (n <= 450) return 400;
+  if (n <= 600) return 500;
+  return 700;
+}
+
+/** font-family → non-placeholder first-in-stack lowercase string. */
+function normalizeFamily(v) {
+  if (typeof v !== "string") return null;
+  const s = v.trim().toLowerCase().replace(/['"]/g, "").split(",")[0].trim();
+  if (!s || isPlaceholderValue(s)) return null;
+  return s;
+}
+
+const SEVERITY_ORDINAL = { None: 0, Trivial: 1, Minor: 2, Major: 3, Critical: 4 };
+const UNPARSEABLE = Symbol("unparseable");
+
+const DESIGN_PROPERTY_KIND = {
+  color: "color", "background-color": "color", background: "color",
+  "border-color": "color", fill: "color",
+  // border-radius reconciled to a ±2px LENGTH / Major (waivable) contract — a
+  // flat row lacks the container-height context a category match needs; see
+  // design-qa.md severity table.
+  "border-radius": "sizeMajor2",
+  width: "sizeMajor2", height: "sizeMajor2",
+  // aggregate spacing AND per-side spacing — both ±2px / Major, matching the
+  // design-qa.md property enum (padding-top/right/bottom/left, margin-*).
+  padding: "sizeMajor2", margin: "sizeMajor2", gap: "sizeMajor2",
+  "padding-top": "sizeMajor2", "padding-right": "sizeMajor2",
+  "padding-bottom": "sizeMajor2", "padding-left": "sizeMajor2",
+  "margin-top": "sizeMajor2", "margin-right": "sizeMajor2",
+  "margin-bottom": "sizeMajor2", "margin-left": "sizeMajor2",
+  "font-size": "fontSize", "font-weight": "fontWeight", "font-family": "fontFamily",
+  "line-height": "lineHeight", "letter-spacing": "letterSpacing",
+};
+
+const MANDATORY_TYPO = ["font-size", "line-height", "font-weight"];
+// aggregate spacing props whose PRESENCE is separately mandatory (>=1 per surface)
+const SPACING_PROPS = ["padding", "margin", "gap"];
+
+/** Any spacing property that satisfies the mandatory per-surface spacing floor:
+ *  aggregate padding/margin/gap OR any per-side padding/margin side key. */
+function isSpacingProperty(p) {
+  return SPACING_PROPS.includes(p) || /^(padding|margin)-(top|right|bottom|left)$/.test(p);
+}
+
+function isMandatoryProperty(p) {
+  return MANDATORY_TYPO.includes(p) || isSpacingProperty(p);
+}
+
+/** CLI-recompute severity per the design-qa.md table. Returns a severity string or UNPARSEABLE. */
+function computeSeverity(property, expected, actual) {
+  const kind = DESIGN_PROPERTY_KIND[String(property).toLowerCase()];
+  if (!kind) return UNPARSEABLE;
+  if (isPlaceholderValue(expected) || isPlaceholderValue(actual)) return UNPARSEABLE;
+  switch (kind) {
+    case "color": {
+      const e = normalizeColor(expected);
+      const a = normalizeColor(actual);
+      if (e === null || a === null) return UNPARSEABLE;
+      return e === a ? "None" : "Critical";
+    }
+    case "fontSize": {
+      const e = normalizeLength(expected);
+      const a = normalizeLength(actual);
+      if (e === null || a === null) return UNPARSEABLE;
+      return e === a ? "None" : "Major";
+    }
+    case "fontWeight": {
+      const e = normalizeWeight(expected);
+      const a = normalizeWeight(actual);
+      if (e === null || a === null) return UNPARSEABLE;
+      return e === a ? "None" : "Major";
+    }
+    case "fontFamily": {
+      const e = normalizeFamily(expected);
+      const a = normalizeFamily(actual);
+      if (e === null || a === null) return UNPARSEABLE;
+      return e === a ? "None" : "Minor";
+    }
+    case "sizeMajor2": {
+      const e = normalizeLength(expected);
+      const a = normalizeLength(actual);
+      if (e === null || a === null) return UNPARSEABLE;
+      return Math.abs(e - a) <= 2 ? "None" : "Major";
+    }
+    case "lineHeight": {
+      const e = normalizeLength(expected);
+      const a = normalizeLength(actual);
+      if (e === null || a === null) return UNPARSEABLE;
+      return Math.abs(e - a) <= 1 ? "None" : "Trivial";
+    }
+    case "letterSpacing": {
+      const e = normalizeLength(expected, true);
+      const a = normalizeLength(actual, true);
+      if (e === null || a === null) return UNPARSEABLE;
+      return Math.abs(e - a) <= 0.5 ? "None" : "Trivial";
+    }
+    default:
+      return UNPARSEABLE;
+  }
+}
+
+/**
+ * Validate the qa.design measurement matrix (or a valid hatch). Returns an
+ * array of refusal strings (empty ⇒ passes). Intentionally side-effecting:
+ * OPTIONAL rows that don't parse are skipped AND recorded via a non-throwing
+ * auditAppend note, so a passing gate is never aborted by the note.
+ */
+function validateDesignGate(gate, ctx, goalId, designSource) {
+  const errs = [];
+  const qa = gate && typeof gate.qa === "object" && gate.qa && !Array.isArray(gate.qa) ? gate.qa : {};
+  const design =
+    qa.design && typeof qa.design === "object" && !Array.isArray(qa.design) ? qa.design : null;
+  const artifacts = Array.isArray(qa.artifacts) ? qa.artifacts : [];
+  const hasScreenshot = artifacts.some((a) => a && typeof a === "object" && isScreenshotArtifact(a));
+  const naAck = !!(
+    gate.architect_review &&
+    typeof gate.architect_review === "object" &&
+    gate.architect_review.design_not_applicable_acknowledged === true
+  );
+
+  // --- not_applicable hatch: no screenshot + substantive reason + nested architect ack ---
+  if (design && design.not_applicable && typeof design.not_applicable === "object" && !Array.isArray(design.not_applicable)) {
+    const na = design.not_applicable;
+    if (hasScreenshot) {
+      errs.push('qa.design.not_applicable is invalid — a screenshot artifact is present, so this is a rendered UI surface and cannot be "not applicable"');
+    }
+    if (!substantiveEvidence(na.reason)) {
+      errs.push(`qa.design.not_applicable.reason must be substantive (>= ${MIN_EVIDENCE_WORDS} words, >= ${MIN_EVIDENCE_CHARS} chars, no placeholders)`);
+    }
+    if (!naAck) {
+      errs.push("qa.design.not_applicable requires nested architect_review.design_not_applicable_acknowledged:true — the alias-form gate cannot express this acknowledgement");
+    }
+    return errs;
+  }
+
+  // --- otherwise a complete matrix is required ---
+  if (!design) {
+    errs.push(`a design source is on record (${designSource}) but qa.design is missing — a complete design measurement matrix, or a valid not_applicable/waived hatch, is required`);
+    return errs;
+  }
+
+  const surfaces = Array.isArray(design.surfaces) ? design.surfaces : null;
+  const rows = Array.isArray(design.rows) ? design.rows : null;
+  if (!surfaces || surfaces.length === 0) errs.push("qa.design.surfaces must be a non-empty array of {name, no_text?}");
+  if (!rows) errs.push("qa.design.rows must be an array of {surface, element, property, figma_expected, impl_actual, severity}");
+  if (errs.length) return errs;
+
+  const surfaceByName = new Map();
+  for (const s of surfaces) {
+    if (!s || typeof s !== "object" || typeof s.name !== "string" || !s.name.trim()) {
+      errs.push("qa.design.surfaces[] entries must each be {name:string, no_text?:boolean}");
+      continue;
+    }
+    // Reject DUPLICATE surface names: a last-wins Map would silently let a
+    // second {name, no_text:true} entry override the honest one and skip all
+    // mandatory typography coverage for that surface — a malformed matrix.
+    if (surfaceByName.has(s.name)) {
+      errs.push(`qa.design.surfaces has a duplicate surface name "${s.name}" — each rendered surface must appear exactly once`);
+      continue;
+    }
+    surfaceByName.set(s.name, { no_text: s.no_text === true });
+  }
+  if (errs.length) return errs;
+
+  const coverage = new Map();
+  for (const name of surfaceByName.keys()) coverage.set(name, new Set());
+  const computedRows = [];
+
+  rows.forEach((row, i) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      errs.push(`qa.design.rows[${i}] must be an object`);
+      return;
+    }
+    const surface = row.surface;
+    const property = typeof row.property === "string" ? row.property.toLowerCase().trim() : null;
+    if (typeof surface !== "string" || !surfaceByName.has(surface)) {
+      errs.push(`qa.design.rows[${i}].surface ${JSON.stringify(surface)} is not one of the declared surfaces`);
+      return;
+    }
+    if (!property || !Object.prototype.hasOwnProperty.call(DESIGN_PROPERTY_KIND, property)) {
+      errs.push(`qa.design.rows[${i}].property ${JSON.stringify(row.property)} is not a recognized design property`);
+      return;
+    }
+    if (typeof row.severity !== "string" || !Object.prototype.hasOwnProperty.call(SEVERITY_ORDINAL, row.severity)) {
+      errs.push(`qa.design.rows[${i}].severity ${JSON.stringify(row.severity)} must be one of ${Object.keys(SEVERITY_ORDINAL).join(", ")}`);
+      return;
+    }
+    const mandatory = isMandatoryProperty(property);
+    const computed = computeSeverity(property, row.figma_expected, row.impl_actual);
+    if (computed === UNPARSEABLE) {
+      if (mandatory) {
+        errs.push(`qa.design.rows[${i}] (surface "${surface}", property "${property}") has an unparseable measured value (figma_expected=${JSON.stringify(row.figma_expected)}, impl_actual=${JSON.stringify(row.impl_actual)}) — a mandatory measurement must be well-formed`);
+      } else {
+        auditAppend(ctx, { category: "goal", verb: "design_optional_row_skipped", goal_id: goalId, surface, property });
+      }
+      return; // skipped rows contribute to neither coverage nor severity
+    }
+    coverage.get(surface).add(property);
+    if (SEVERITY_ORDINAL[row.severity] < SEVERITY_ORDINAL[computed]) {
+      errs.push(`qa.design.rows[${i}] (surface "${surface}", property "${property}") submitted severity "${row.severity}" is more lenient than the CLI-recomputed "${computed}" (figma_expected=${JSON.stringify(row.figma_expected)}, impl_actual=${JSON.stringify(row.impl_actual)})`);
+    }
+    computedRows.push({ surface, property, computed, figma_expected: row.figma_expected, impl_actual: row.impl_actual });
+  });
+  if (errs.length) return errs;
+
+  // mandatory coverage per surface
+  for (const [name, meta] of surfaceByName) {
+    const covered = coverage.get(name);
+    const need = meta.no_text ? [] : MANDATORY_TYPO;
+    for (const p of need) {
+      if (!covered.has(p)) errs.push(`qa.design surface "${name}" is missing a mandatory ${p} measurement row`);
+    }
+    if (![...covered].some(isSpacingProperty)) {
+      errs.push(`qa.design surface "${name}" is missing a mandatory spacing measurement row (one of ${SPACING_PROPS.join("/")}, or a per-side padding-*/margin-*)`);
+    }
+  }
+  if (errs.length) return errs;
+
+  // block on computed Critical (never waivable) / Major (waivable by the USER only)
+  const criticals = computedRows.filter((r) => r.computed === "Critical");
+  const majors = computedRows.filter((r) => r.computed === "Major");
+
+  if (criticals.length > 0) {
+    for (const r of criticals) {
+      errs.push(`qa.design surface "${r.surface}" property "${r.property}" computes Critical (figma_expected=${JSON.stringify(r.figma_expected)}, impl_actual=${JSON.stringify(r.impl_actual)}) — a Critical design gap can NEVER be waived; resolve it`);
+    }
+    return errs;
+  }
+
+  if (majors.length > 0) {
+    const waived = design.waived && typeof design.waived === "object" && !Array.isArray(design.waived) ? design.waived : null;
+    if (!waived) {
+      for (const r of majors) {
+        errs.push(`qa.design surface "${r.surface}" property "${r.property}" computes Major (figma_expected=${JSON.stringify(r.figma_expected)}, impl_actual=${JSON.stringify(r.impl_actual)}) — resolve it, or record a user-acknowledged qa.design.waived`);
+      }
+      return errs;
+    }
+    if (!substantiveEvidence(waived.reason)) {
+      errs.push(`qa.design.waived.reason must be substantive (>= ${MIN_EVIDENCE_WORDS} words, >= ${MIN_EVIDENCE_CHARS} chars, no placeholders)`);
+    }
+    if (waived.user_acknowledged !== true) {
+      errs.push("qa.design.waived.user_acknowledged must be true — a Major may only be waived by explicit user acknowledgement (the agent may not self-waive)");
+    }
+    const waivedSurfaces = Array.isArray(waived.surfaces) ? waived.surfaces : [];
+    for (const r of majors) {
+      if (!waivedSurfaces.includes(r.surface)) {
+        errs.push(`qa.design.waived does not list surface "${r.surface}" which carries a Major gap (property "${r.property}") — every Major surface must be explicitly waived`);
+      }
+    }
+    if (errs.length) return errs;
+  }
 
   return errs;
 }
@@ -1042,7 +1505,7 @@ async function cmdGoalCheckpoint(ctx, flags) {
       "--status complete REQUIRES --quality-gate-json <path|-> — the completion quality gate is fail-closed"
     );
   }
-  const errs = validateQualityGate(gate, ctx.projectRoot);
+  const errs = validateQualityGate(gate, ctx, goalId);
   if (errs.length > 0) {
     refuse(
       ctx,

@@ -182,6 +182,14 @@ target the right element:
 - Emit a mapping table: `figma frame/node → route → root selector → breakpoint(s)`. Flag any frame
   with no implemented counterpart, or implemented surface with no design frame, as an evidence note.
 
+**Surface enumeration (mandatory, per-variant).** If the design defines conditional variants or states
+for a component — e.g. a card's 1-thumbnail vs 2-thumbnail layout, empty vs populated, hover/focus/
+disabled — enumerate EACH design-defined variant/state as its OWN surface in the mapping table and in
+`qa.design.surfaces` (below), not as a single collapsed surface. Render and measure that variant's own
+geometry (at minimum width, border-radius, gap) rather than assuming it matches a sibling variant. The
+mandatory-row coverage in the qa.design schema applies **per rendered variant surface**: a component
+with three design-defined states in scope needs three surfaces' worth of mandatory rows, not one.
+
 ## Step 3 — Capture & compare (per mapped surface, per breakpoint)
 
 1. `browser_navigate` to the route, then `browser_resize` to the breakpoint width (match the design
@@ -228,7 +236,7 @@ target the right element:
 | Gap category | Tolerance | Severity | Blocking? |
 |---|---|---|---|
 | Color (bg / text / border), effective hex | exact match | **Critical** | yes |
-| border-radius category (pill/lg/md/sm/none, by radius÷height) | category match | **Critical** | yes |
+| border-radius | ±2px | **Major** | yes |
 | width / height | ±2px | **Major** | yes |
 | padding / margin / gap | ±2px | **Major** | yes |
 | font-size | exact | **Major** | yes |
@@ -256,6 +264,59 @@ Return to the leader (do not paste artifact bodies — reference paths):
   a `qa.blockers` entry with `qa.status` `not-verified` — the design dimension cannot be `passed` from
   the design source alone.
 
+### `qa.design` measurement matrix (mandatory, mechanically validated)
+
+Alongside the findings table above, assemble the machine-readable `qa.design` object the leader folds
+into the goal's `qa{}` quality-gate JSON. This is EXACTLY the shape the sanctioned CLI (`cat-state.mjs`)
+parses and validates — do not rename keys or invent fields:
+
+```json
+{
+  "source": "<the design/Figma URL or doc used>",
+  "surfaces": [
+    { "name": "<surface name, one per rendered variant — see Surface enumeration above>", "no_text": false }
+  ],
+  "rows": [
+    {
+      "surface": "<matches a surfaces[].name>",
+      "element": "<element/node measured>",
+      "property": "<one of the property enum below>",
+      "figma_expected": "<value from the design source>",
+      "impl_actual": "<value measured via browser_evaluate on the live DOM>",
+      "severity": "<one of the severity enum below>"
+    }
+  ],
+  "waived": null,
+  "not_applicable": null
+}
+```
+
+- `property` enum (exact strings; the CLI rejects anything else): `font-size`, `line-height`,
+  `font-weight`, `letter-spacing`, `font-family`, `color`, `width`, `height`, `padding-top`,
+  `padding-right`, `padding-bottom`, `padding-left`, `margin-top`, `margin-right`, `margin-bottom`,
+  `margin-left`, `gap`, `border-radius`. The aggregate forms `padding` and `margin` are also
+  accepted by the CLI (use per-side keys when the design specifies different values per side).
+- `severity` enum (exact strings): `Critical`, `Major`, `Minor`, `Trivial`, `None`.
+- Per surface (unless that surface is `no_text:true`), MANDATORY rows cover `font-size`, `line-height`,
+  `font-weight` for every in-scope text element, plus at least one of padding/margin/gap for spacing.
+  This coverage is **per rendered variant surface** (see Surface enumeration above), not per component.
+- `waived` is `null`, or `{"reason": "<substantive reason>", "surfaces": ["<surface names covered>"],
+  "user_acknowledged": true}` — see [R18] Blocker handling below; **Major only, never Critical**.
+- `not_applicable` is `null`, or `{"reason": "<substantive reason the design-sourced goal is non-UI>"}`
+  — valid ONLY when no screenshot artifact exists in `qa.artifacts` AND the goal's top-level
+  `architect_review.design_not_applicable_acknowledged` (boolean, nested inside `architect_review`,
+  NOT inside `qa.design`) is `true`. Both the reason and the architect ack are required; a
+  design-sourced goal that DOES have a screenshot cannot use `not_applicable`.
+
+**The CLI recomputes severity — do not rely on a self-labeled value.** Every submitted `severity` is
+independently recomputed by the sanctioned CLI from `figma_expected`/`impl_actual` against the existing
+severity table above (`design-qa.md` severity classification); a submitted severity more lenient than
+the recomputed one is rejected outright, and the checkpoint is refused if any recomputed severity is
+Critical or Major and no valid hatch (`waived` or `not_applicable`) covers it. Because of this recompute,
+measuring per-text `font-size`/`line-height`/`font-weight` and per-surface spacing is **mandatory, not
+optional** — an incomplete or unmeasured matrix fails the gate exactly like a measured-and-wrong one; you
+cannot skip a row to avoid a bad number.
+
 Design-dimension `qa.status` is `passed` only when BOTH: (a) the Capture-integrity gate's pre-verdict
 self-check is fully satisfied (a real live render was captured, both AS-IS/TO-BE images exist and were
 eyeballed, and every number came from the live DOM), AND (b) no unresolved Critical/Major gap remains.
@@ -271,6 +332,20 @@ blocker flow, the leader either fixes it within the current goal (spawn an `exec
 gap + fix hint, then rerun this lane on the affected surfaces — full re-audit of the component, not a
 narrow re-check of the one value) or spawns a new blocker goal (record-review-blockers) carrying the
 findings. Never downgrade a real gap to advisory to pass the gate; a few pixels off spec is still Major.
+
+**[R18] A Critical is NEVER waivable — fix it, full stop.** There is no path that clears a computed
+Critical other than making the implementation match the design; `qa.design.waived` cannot cover a
+Critical row and the CLI rejects it regardless of `user_acknowledged`.
+
+**[R18] A remaining Major may be waived, but only by the USER, never by the agent.** The default is
+still "resolve everything." If, after a genuine attempt to fix it, a Major gap cannot be resolved within
+the goal, the leader MUST STOP and use AskUserQuestion to SURFACE the specific Major to the user —
+showing the affected surface, the `property`, and the `figma_expected`/`impl_actual` values — before
+doing anything else with it. The leader may record `qa.design.waived.user_acknowledged: true` ONLY after
+the user has explicitly approved waiving that specific gap in that turn; the agent may NOT self-waive, may
+NOT infer approval from silence or from a general "looks good," and may NOT set `user_acknowledged` in
+anticipation of asking. If the user instead chooses to keep fixing, treat it exactly like any other
+unresolved Major: fix-and-rerun or spawn a blocker goal, per the paragraph above.
 
 ## Out of scope (explicit)
 

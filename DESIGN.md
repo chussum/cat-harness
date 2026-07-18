@@ -224,6 +224,29 @@ compares, and additionally requires freshness (`goal.updated_at === verified_at`
 ledger row to exist, and the gate hash to match — any post-verification edit to ANY goal-row
 field (including `completed_at`) fails verify.
 
+Mechanical design-QA gate (`goal checkpoint --status complete`, `validateQualityGate(gate, ctx, goalId)`):
+when a design source is on record for the goal — a Figma/design URL found by scanning the
+deep-interview spec's `Design Source` line, the approved plan (`plans/**`), OR the checkpointed
+goal's own objective/title in `goals.json` (goalId-scoped so a sibling goal's URL never
+false-triggers) — the gate additionally REQUIRES a `qa.design` measurement matrix and REFUSES the
+checkpoint unless it is complete and clean. Each row `{surface, element, property, figma_expected,
+impl_actual, severity}` has its severity RECOMPUTED by the CLI from `figma_expected`/`impl_actual`
+against `design-qa.md`'s severity table (ordinal `Critical>Major>Minor>Trivial>None`); a submitted
+severity more lenient than computed is rejected, and any unresolved Critical/Major fails the gate —
+so the fix-then-remeasure loop is structurally forced, not self-declared. Mandatory coverage per
+surface: font-size, line-height, font-weight (unless `no_text:true`) plus one of padding/margin/gap;
+an unparseable MANDATORY row rejects, an unparseable OPTIONAL row is skipped with a non-throwing
+`design_optional_row_skipped` audit note. Two audited escape hatches: `not_applicable{reason}`
+(valid only with NO screenshot artifact present + a substantive reason + nested
+`architect_review.design_not_applicable_acknowledged:true`), and `waived{reason, surfaces,
+user_acknowledged}` (a **Major only**, never a Critical; requires `user_acknowledged:true` — the
+leader must surface the Major to the user first per `design-qa.md`; the user, not the architect, is
+the waiver authority). A goal with NO design source on record is byte-identical to the pre-gate
+behavior. Disclosed residuals (the CLI is a zero-dependency verifier): fabrication (cannot prove a
+measurement was taken), coverage-floor (cannot force the specific wrong element), ack-softness
+(acks are leader-assembled), and chat-only links (a design URL only in free-text chat, never
+persisted to spec/plan/goal, does not trigger).
+
 Deterministic ambiguity floor (exact port):
 `floor = clamp( 0.10 × disputed_facts + 0.05 × unscored_active_components + 0.05 × min(1, auto_answered_rounds / max(scored_rounds,1)), 0, 1 )`, rounded to 2 decimals.
 - disputed fact = established fact with `disputed:true` and no non-empty `superseded_by`
