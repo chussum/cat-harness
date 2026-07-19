@@ -1664,6 +1664,134 @@ function cmdReceiptVerify(ctx, flags) {
   printJson({ ok: true, goal_id: goalId, receipt });
 }
 
+// ---------------------------------------------------- design diff (QA lane aid)
+
+/**
+ * `design diff` — mechanical Figma↔implementation measurement diff, the
+ * authoring aid behind `skills/ultragoal/references/design-qa.md`'s
+ * "two-numbers rule" and "no sampling" doctrine.
+ *
+ * It joins the extracted Figma sized-node INVENTORY (`--figma`) against the
+ * LIVE-DOM computed measurements (`--impl`) by (surface, element, property) and
+ * mechanically:
+ *  - emits gate-ready `qa.design.rows` ONLY for fully-paired, well-formed pairs,
+ *    with severity computed by the SAME `computeSeverity()` the checkpoint gate
+ *    uses (the diff tool and the gate can never disagree);
+ *  - reports `unmeasured` (a Figma spec with NO impl counterpart — a node that
+ *    was extracted but not measured; this is exactly where a mismatch would
+ *    otherwise be GUESSED, e.g. the 40px section-box proxy), `unexpected` (an
+ *    impl measurement with no Figma spec), and `malformed` (a pair whose values
+ *    don't parse or use an unknown property);
+ *  - refuses (`ok:false`, exit 2) when ANY `unmeasured` or `malformed` entry
+ *    exists — the mechanical form of "no row, no claim, without BOTH
+ *    figma_expected AND impl_actual". Real Critical/Major gaps on well-formed
+ *    pairs are NOT a tool error (they are legitimate findings the leader routes
+ *    to fix/waive at checkpoint) → `ok:true`, exit 0, surfaced in `summary`.
+ *
+ * This is the closest a zero-dependency verifier can get to closing the
+ * documented per-element coverage residual: it cannot force the agent to
+ * extract a COMPLETE inventory, but once a node is on the `--figma` inventory it
+ * can no longer be silently dropped — every extracted sized node must carry a
+ * measured counterpart or the diff stays red.
+ */
+async function cmdDesignDiff(ctx, flags) {
+  if (flags.figma === undefined || flags.impl === undefined) {
+    throw new UsageError("design diff requires --figma <path|-> and --impl <path|->");
+  }
+  if (flags.figma === "-" && flags.impl === "-") {
+    throw new UsageError("design diff: only one of --figma/--impl may read stdin (-)");
+  }
+  const readManifest = async (val, label) => {
+    const raw = val === "-" ? await readStdin() : fs.readFileSync(path.resolve(ctx.projectRoot, val), "utf8");
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new ContractError(`--${label} is not valid JSON (${err.message})`);
+    }
+    if (!Array.isArray(parsed)) throw new ContractError(`--${label} must be a JSON array of measurement rows`);
+    return parsed;
+  };
+  const figma = await readManifest(flags.figma, "figma");
+  const impl = await readManifest(flags.impl, "impl");
+
+  const keyOf = (e) =>
+    `${String(e.surface ?? "").trim()} ${String(e.element ?? "").trim()} ${String(e.property ?? "").toLowerCase().trim()}`;
+
+  const errs = [];
+  const index = (list, label, valueKey) => {
+    const map = new Map();
+    list.forEach((e, i) => {
+      if (!e || typeof e !== "object" || Array.isArray(e)) {
+        errs.push(`--${label}[${i}] must be an object`);
+        return;
+      }
+      for (const req of ["surface", "element", "property", valueKey]) {
+        if (typeof e[req] !== "string" || !e[req].trim()) {
+          errs.push(`--${label}[${i}] is missing a non-empty "${req}"`);
+        }
+      }
+      const k = keyOf(e);
+      if (map.has(k)) {
+        errs.push(`--${label} has a duplicate (surface,element,property) key ${JSON.stringify([e.surface, e.element, e.property])}`);
+        return;
+      }
+      map.set(k, e);
+    });
+    return map;
+  };
+  const figmaMap = index(figma, "figma", "figma_expected");
+  const implMap = index(impl, "impl", "impl_actual");
+  if (errs.length) throw new ContractError(errs.join("; "));
+
+  const rows = [];
+  const unmeasured = [];
+  const unexpected = [];
+  const malformed = [];
+  const bySeverity = { Critical: 0, Major: 0, Minor: 0, Trivial: 0, None: 0 };
+
+  for (const [k, fe] of figmaMap) {
+    const ie = implMap.get(k);
+    if (!ie) {
+      unmeasured.push({ surface: fe.surface, element: fe.element, property: fe.property, figma_expected: fe.figma_expected });
+      continue;
+    }
+    const property = String(fe.property).toLowerCase().trim();
+    const severity = computeSeverity(property, fe.figma_expected, ie.impl_actual);
+    if (severity === UNPARSEABLE) {
+      malformed.push({ surface: fe.surface, element: fe.element, property: fe.property, figma_expected: fe.figma_expected, impl_actual: ie.impl_actual });
+      continue;
+    }
+    rows.push({ surface: fe.surface, element: fe.element, property, figma_expected: fe.figma_expected, impl_actual: ie.impl_actual, severity });
+    bySeverity[severity] += 1;
+  }
+  for (const [k, ie] of implMap) {
+    if (!figmaMap.has(k)) {
+      unexpected.push({ surface: ie.surface, element: ie.element, property: ie.property, impl_actual: ie.impl_actual });
+    }
+  }
+
+  const ready = unmeasured.length === 0 && malformed.length === 0;
+  printJson({
+    ok: ready,
+    rows,
+    unmeasured,
+    unexpected,
+    malformed,
+    summary: {
+      figma_nodes: figmaMap.size,
+      impl_nodes: implMap.size,
+      paired: rows.length,
+      unmeasured: unmeasured.length,
+      unexpected: unexpected.length,
+      malformed: malformed.length,
+      by_severity: bySeverity,
+      blocking: bySeverity.Critical + bySeverity.Major,
+    },
+  });
+  if (!ready) process.exit(EXIT_CONTRACT);
+}
+
 // --------------------------------------------------------------------- main
 
 const USAGE = `usage: cat-state.mjs <subcommand> --session <sid> [flags]
@@ -1678,7 +1806,11 @@ subcommands:
   ledger append --json <str|->
   dialogue append --json <str|->
   floor
-  receipt verify --goal GNNN`;
+  receipt verify --goal GNNN
+  design diff  --figma <path|-> --impl <path|->   # mechanical Figma↔impl measurement diff (design-qa lane aid):
+                                                  # joins by (surface,element,property), emits gate-ready qa.design
+                                                  # rows for well-formed pairs, refuses (exit 2) on any unmeasured
+                                                  # (extracted-but-not-measured) or malformed pair — the two-numbers rule`;
 
 function parseArgs(argv) {
   const words = [];
@@ -1724,6 +1856,8 @@ async function main() {
       return cmdFloor(ctx);
     case "receipt verify":
       return cmdReceiptVerify(ctx, flags);
+    case "design diff":
+      return cmdDesignDiff(ctx, flags);
     default:
       throw new UsageError(`unknown subcommand "${command}"\n${USAGE}`);
   }

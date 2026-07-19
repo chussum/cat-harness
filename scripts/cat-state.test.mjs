@@ -905,4 +905,152 @@ test("RE-VERIFY: Critical still blocks even alongside a properly-waived Major on
   assert.match(r.stderr, /can NEVER be waived/);
 });
 
+// ===========================================================================
+// `design diff` — mechanical Figma↔impl measurement diff (design-qa lane aid).
+// Covers the "two-numbers rule" (no row without BOTH numbers) and the "no
+// sampling / no omission" enforcement (every extracted sized node must carry a
+// measured counterpart), sharing computeSeverity() with the checkpoint gate.
+// ===========================================================================
+
+function runDesignDiff(project, figma, impl, { sid = "s" } = {}) {
+  const fp = path.join(project, "figma.json");
+  const ip = path.join(project, "impl.json");
+  fs.writeFileSync(fp, JSON.stringify(figma));
+  fs.writeFileSync(ip, JSON.stringify(impl));
+  const r = runCatState(["design", "diff", "--session", sid, "--figma", fp, "--impl", ip], { cwd: project });
+  return { ...r, json: (() => { try { return JSON.parse(r.stdout); } catch { return null; } })() };
+}
+
+test("design diff: fully-paired, well-formed manifests → ok:true, exit 0, gate-ready rows with CLI severity", () => {
+  const project = mkTmpProject();
+  const r = runDesignDiff(
+    project,
+    [
+      { surface: "banner", element: "pill", property: "width", figma_expected: "103px" },
+      { surface: "banner", element: "title", property: "font-size", figma_expected: "20px" },
+    ],
+    [
+      { surface: "banner", element: "pill", property: "width", impl_actual: "103px" },
+      { surface: "banner", element: "title", property: "font-size", impl_actual: "20px" },
+    ]
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.summary.paired, 2);
+  assert.equal(r.json.summary.blocking, 0);
+  assert.equal(r.json.rows.every((row) => row.figma_expected && row.impl_actual && row.severity), true);
+});
+
+test("design diff: a REAL gap on a well-formed pair is a finding (ok:true, exit 0), severity computed like the gate", () => {
+  const project = mkTmpProject();
+  const r = runDesignDiff(
+    project,
+    [{ surface: "banner", element: "pill", property: "width", figma_expected: "103px" }],
+    [{ surface: "banner", element: "pill", property: "width", impl_actual: "140px" }]
+  );
+  // A real gap is the tool WORKING, not a tool error — exit 0, surfaced in summary.
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.rows[0].severity, "Major");
+  assert.equal(r.json.summary.blocking, 1);
+});
+
+test("design diff: an extracted-but-unmeasured Figma node (the pill-omission bug) → unmeasured, ok:false, exit 2", () => {
+  const project = mkTmpProject();
+  const r = runDesignDiff(
+    project,
+    [
+      { surface: "banner", element: "title", property: "font-size", figma_expected: "20px" },
+      { surface: "banner", element: "badge", property: "border-radius", figma_expected: "8px" },
+    ],
+    [{ surface: "banner", element: "title", property: "font-size", impl_actual: "20px" }]
+  );
+  assert.equal(r.status, 2, r.stdout);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.summary.unmeasured, 1);
+  assert.equal(r.json.unmeasured[0].element, "badge");
+});
+
+test("design diff: a paired-but-unparseable value (would-be guess) → malformed, ok:false, exit 2", () => {
+  const project = mkTmpProject();
+  const r = runDesignDiff(
+    project,
+    [{ surface: "banner", element: "pill", property: "width", figma_expected: "103px" }],
+    [{ surface: "banner", element: "pill", property: "width", impl_actual: "not-a-length" }]
+  );
+  assert.equal(r.status, 2, r.stdout);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.summary.malformed, 1);
+  assert.equal(r.json.rows.length, 0);
+});
+
+test("design diff: an impl measurement with no Figma spec → unexpected, NON-blocking (exit 0)", () => {
+  const project = mkTmpProject();
+  const r = runDesignDiff(
+    project,
+    [{ surface: "banner", element: "pill", property: "width", figma_expected: "103px" }],
+    [
+      { surface: "banner", element: "pill", property: "width", impl_actual: "103px" },
+      { surface: "banner", element: "stray", property: "gap", impl_actual: "8px" },
+    ]
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.summary.unexpected, 1);
+  assert.equal(r.json.unexpected[0].element, "stray");
+});
+
+test("design diff: --impl - reads the impl manifest from stdin", () => {
+  const project = mkTmpProject();
+  const fp = path.join(project, "f.json");
+  fs.writeFileSync(fp, JSON.stringify([{ surface: "b", element: "pill", property: "width", figma_expected: "103px" }]));
+  const r = runCatState(["design", "diff", "--session", "s", "--figma", fp, "--impl", "-"], {
+    cwd: project,
+    input: JSON.stringify([{ surface: "b", element: "pill", property: "width", impl_actual: "103px" }]),
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).summary.paired, 1);
+});
+
+test("design diff: a duplicate (surface,element,property) key is a contract refusal (exit 2)", () => {
+  const project = mkTmpProject();
+  const r = runDesignDiff(
+    project,
+    [
+      { surface: "b", element: "pill", property: "width", figma_expected: "1px" },
+      { surface: "b", element: "pill", property: "width", figma_expected: "2px" },
+    ],
+    [{ surface: "b", element: "pill", property: "width", impl_actual: "1px" }]
+  );
+  assert.equal(r.status, 2, r.stdout);
+  assert.match(r.stderr, /duplicate \(surface,element,property\) key/);
+});
+
+test("design diff: a row missing a required field is a contract refusal (exit 2)", () => {
+  const project = mkTmpProject();
+  const r = runDesignDiff(
+    project,
+    [{ surface: "b", element: "pill", property: "width" }], // no figma_expected
+    [{ surface: "b", element: "pill", property: "width", impl_actual: "1px" }]
+  );
+  assert.equal(r.status, 2, r.stdout);
+  assert.match(r.stderr, /missing a non-empty "figma_expected"/);
+});
+
+test("design diff: missing --impl is a usage error (exit 1)", () => {
+  const project = mkTmpProject();
+  const fp = path.join(project, "f.json");
+  fs.writeFileSync(fp, JSON.stringify([{ surface: "b", element: "pill", property: "width", figma_expected: "1px" }]));
+  const r = runCatState(["design", "diff", "--session", "s", "--figma", fp], { cwd: project });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stderr, /requires --figma .* and --impl/);
+});
+
+test("design diff: non-array manifest is a contract refusal (exit 2)", () => {
+  const project = mkTmpProject();
+  const r = runDesignDiff(project, { not: "an array" }, [{ surface: "b", element: "p", property: "width", impl_actual: "1px" }]);
+  assert.equal(r.status, 2, r.stdout);
+  assert.match(r.stderr, /--figma must be a JSON array/);
+});
+
 // --- AC14: the full pre-existing suite stays green — covered by running this file. ---

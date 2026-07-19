@@ -191,9 +191,16 @@ completion gate additionally runs the **design-QA evidence lane**
 (`references/design-qa.md`): goal-scoped design policy extraction from Figma
 (MCP Dev Mode preferred, REST token or screenshots as fallback),
 Figma↔implementation mapping, Playwright capture at the design's breakpoints,
-computed-style comparison, and severity-classified gaps. Unresolved
-Critical/Major design gaps block completion. Requires Playwright MCP for live
-capture (degrades to inspection-only with an explicit evidence note).
+computed-style comparison, and severity-classified gaps. The comparison runs on
+a **two-numbers rule** — no mismatch is asserted without BOTH the design's number
+and the live-DOM number, and no sampling: every explicitly-sized node (down to
+pills, badges, labels, and thumbnails) is enumerated and measured. The
+`cat-state.mjs design diff` subcommand mechanizes this — it joins the extracted
+Figma inventory against the live measurements and stays red until every extracted
+node has a well-formed measured counterpart, so extracted-but-dropped elements and
+impression-based guesses cannot pass. Unresolved Critical/Major design gaps block
+completion. Requires Playwright MCP for live capture (degrades to inspection-only
+with an explicit evidence note).
 Test-case generation, Excel reports, and Jira tickets are deliberately out of
 scope — use a dedicated QA skill for the full pipeline.
 

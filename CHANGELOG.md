@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.7.0 — Two-numbers rule + `design diff` mechanical measurement diff (2026-07-19)
+
+Closes the two design-QA misses the 0.6.0 gate could not: an element measured by
+SAMPLING (small fixed-size nodes — pills, badges, labels, thumbnails — silently
+dropped, so the gate never sees a row to recompute) and a mismatch asserted by
+GUESSING (an impression or the wrong proxy value — e.g. a section-box `gap`
+standing in for the design's real bottom-padding rhythm, the "40px" correction of
+a value that was never wrong). Both are one disease — a comparison acted on
+without both real numbers — so both get one cure.
+
+- **New `design diff` subcommand in `scripts/cat-state.mjs`.** Joins the extracted
+  Figma sized-node inventory (`--figma`) against the live-DOM measurements
+  (`--impl`) by `(surface, element, property)` and emits gate-ready `qa.design`
+  rows — with severity computed by the SAME `computeSeverity()` the checkpoint
+  gate uses, so the diff and the gate can never disagree. It emits a row ONLY for
+  a pair holding BOTH numbers, well-formed (the mechanical **two-numbers rule**);
+  reports `unmeasured` (a design node on the inventory with no measured
+  counterpart — the pill-omission and the 40px-guess made impossible), `malformed`
+  (a pair whose value does not parse), and `unexpected` (an impl node with no
+  design spec — informational); and exits **2** while any `unmeasured`/`malformed`
+  entry remains, **0** once every extracted node carries a well-formed measured
+  counterpart. A real Critical/Major gap on a well-formed pair is a finding, not a
+  tool error (`ok:true`, surfaced in `summary.blocking`). Read-only — touches no
+  session state. This *partially* mitigates the disclosed per-element coverage-floor
+  residual: an extracted node can no longer be silently dropped, though the tool
+  remains bounded by the honesty of the declared inventory. +11 tests (52→63
+  cat-state suite total).
+- **`skills/ultragoal/references/design-qa.md` measurement doctrine.** New governing
+  "two-numbers rule & no sampling" section (read before measuring): hold BOTH
+  `figma_expected` and `impl_actual` before asserting or fixing any mismatch;
+  impressionistic language ("looks same/bigger/aligned") is banned; compare the
+  design's OWN property on that node, never a nearby proxy (measure the resulting
+  geometry when design and impl express the same spacing through different CSS
+  mechanisms); enumerate EVERY explicitly-sized node (`w-[N]`/`h-[N]`/`min-width`/
+  `gap`/`px`/`py`/…), prioritizing small fixed-size elements (pill/badge/label/chip/
+  thumbnail/counter/avatar). Step 3 now routes the compare through `design diff`,
+  and the pre-verdict self-check gains four boxes (full enumeration, both numbers,
+  no proxy, diff exits 0).
+- **Docs.** `DESIGN.md` §4 documents the subcommand and updates the coverage-floor
+  residual note; `README.md` describes the two-numbers rule and `design diff` in the
+  design-QA lane.
+
 ## 0.6.1 — Phase-guard no longer misreads `=>`/`->` as a redirect (2026-07-19)
 
 - **Fix `hooks/cat-hook.mjs` false-positive mutation block.** The Bash

@@ -144,9 +144,91 @@ a finding to measure, not something to wave through.
 - [ ] I exported the mapped TO-BE Figma frame/node on disk (or used the provided design image in fallback mode).
 - [ ] I opened BOTH images and did an explicit side-by-side VISUAL comparison, recording a visual-gap list — not only a numeric diff.
 - [ ] Every numeric claim in the findings came from `browser_evaluate` on the LIVE DOM — none from reading source code or from the design guide alone.
+- [ ] I enumerated EVERY explicitly-sized design node (no sampling) — including small fixed-size elements (pill/badge/label/chip/thumbnail/counter/avatar) — and each has a row; none was dropped.
+- [ ] Every finding holds BOTH numbers (two-numbers rule): `figma_expected` from the design source AND `impl_actual` from the live DOM, on the same element and the same property — no impressionistic ("looks/seems") claim, no proxy value stood in for the design's own property.
+- [ ] `cat-state.mjs design diff` was run over the `--figma` inventory and `--impl` measurements and exits 0 (no `unmeasured`/`malformed`); its `rows` back the matrix below.
 
 If any box is unchecked, the design dimension is `not-verified` and a `qa.blockers` entry is emitted —
 never a `passed`.
+
+## Measurement doctrine — the two-numbers rule & no sampling (read BEFORE measuring anything)
+
+Two recurring misses share ONE root cause and ONE cure. Both are failures of measurement discipline, not
+of eyesight:
+
+- **The omission miss (pill-type).** You measured the big, obvious elements — section titles, card widths,
+  colors — and skipped the small fixed-size elements packed inside (pills, badges, labels, chips,
+  thumbnails, counters, avatars). The gate did not catch it because the gate recomputes the severity of the
+  rows you *submit* — it does not know what elements the surface actually renders, so a row you never write
+  is a gap it can never see (this is the disclosed per-element coverage residual). Completeness is on YOU.
+- **The guess miss (40px-type).** You declared a mismatch — or "fixed" one — from an impression ("looks too
+  big", "seems off") or from the WRONG proxy value. Classic case: the design gives the vertical rhythm via a
+  frame's bottom padding, the implementation gives it via `flex` `gap`, and you compared the section-box
+  `gap` (a proxy) instead of the actual element-bottom→next-title distance the design specifies — then
+  "corrected" a value that was never wrong.
+
+**The two-numbers rule (mandatory).** Before you assert a mismatch, write a finding, or change a single
+value, you MUST hold BOTH numbers in hand:
+- `figma_expected` — the exact number pulled from the design source (`get_design_context` /
+  `get_variable_defs` / REST node JSON), for THAT element, for THAT property.
+- `impl_actual` — the computed value measured with `browser_evaluate` on the LIVE DOM, on THAT same
+  element, for THAT same property.
+
+If either number is missing, you do NOT have a finding — you have an unmeasured node. Go measure it. Never
+emit or act on a comparison with only one number.
+
+- **No impressionistic language, ever.** "같아 보인다 / 커 보인다 / looks aligned / seems off / roughly" are
+  banned in findings. A finding is two numbers and their diff. If you cannot put a number to a visual gap
+  you can see, it is a node *to measure*, not a verdict to state (measure it, then classify).
+- **Compare the design's OWN property, never a proxy.** Measure the exact property the design defines on
+  that exact node. If the design spaces two blocks with a 40px bottom padding, measure the implementation's
+  effective bottom-of-element→top-of-next-title distance — not a container's `gap`, not a parent's margin,
+  not a "section box" that merely looks related. A proxy that happens to be nearby is not the value; if the
+  design and the implementation express the same visual spacing through different CSS mechanisms
+  (padding vs gap vs margin), measure the RESULTING geometry, not one side's mechanism.
+
+**No sampling — enumerate every explicitly-sized node.** From `get_design_context`, extract EVERY node that
+carries an explicit size or spacing directive — `w-[N]`, `h-[N]`, `min-width`/`max-width`, `gap-N`, `px-N`,
+`py-N`, `p-N`, `m-N`, fixed `font-size`/`line-height`, `rounded-[N]` — not just the large or obvious ones.
+Each such node comes back with a `data-node-id` and its exact CSS; map each one to its rendered counterpart
+by text/structure and measure it 1:1. **Prioritize the small fixed-width elements first** (pill / badge /
+label / chip / thumbnail / counter / avatar) — those are exactly the ones sampling drops. Every
+explicitly-sized node becomes a `qa.design` row; a node you extracted from the design but did not measure is
+an omission, not an optional skip.
+
+### Mechanical enforcement — `cat-state.mjs design diff` (use it; don't hand-diff)
+
+To take judgment out of the loop, the two manifests above are diffed by a sanctioned CLI command instead of
+by eye. It shares the EXACT severity math of the checkpoint gate, so the diff and the gate can never
+disagree:
+
+```
+node "{helper}" design diff --session {sid} --figma <path|-> --impl <path|->
+```
+
+- `--figma` — a JSON array of the extracted design inventory: one entry per explicitly-sized node,
+  `{ "surface", "element", "property", "figma_expected" }` (extra keys like a Figma node id are ignored).
+  This IS your no-sampling enumeration, written down.
+- `--impl` — a JSON array of the live-DOM measurements: `{ "surface", "element", "property", "impl_actual" }`,
+  each value straight from `browser_evaluate` computed styles. Use the SAME `surface`/`element`/`property`
+  labels as the `--figma` side so they join.
+
+The command joins by `(surface, element, property)` and:
+- emits gate-ready `qa.design.rows` (with CLI-computed `severity`) ONLY for pairs that have BOTH numbers and
+  parse cleanly — mechanizing the two-numbers rule: no row exists without both values;
+- lists `unmeasured` — nodes on the `--figma` inventory with no `--impl` counterpart. This is the
+  pill-omission and the 40px-guess made impossible: a node you extracted but did not measure keeps the diff
+  **red** (`ok:false`, exit 2) until you measure it. You cannot pass by dropping the row;
+- lists `malformed` (a pair whose value does not parse — a would-be guess) and `unexpected` (an impl node
+  with no design spec — informational, non-blocking);
+- exits **2** while any `unmeasured` or `malformed` entry remains, **0** once every extracted node carries a
+  well-formed measured counterpart. A real Critical/Major gap on a well-formed pair is NOT a tool error — it
+  is a legitimate finding (`ok:true`, surfaced in `summary.blocking`) that you then route to fix/waive.
+
+Run it until it is green (exit 0), then fold its `rows` straight into the `qa.design` matrix below. Its
+green state means "every node I extracted was measured with two real numbers" — it does NOT by itself mean
+"no gaps"; gaps are the rows it emits with Major/Critical severity, which you still fix. This does not
+replace the mandatory side-by-side visual pass (numbers still miss shape/alignment/imagery) — run both.
 
 ## Step 1 — Extract the design policy (scoped to THIS goal)
 
@@ -214,14 +296,23 @@ with three design-defined states in scope needs three surfaces' worth of mandato
    files side by side, no image compositing, no Pillow. In screenshots-only fallback mode the
    user-provided design image plays this role.
 4. Measure the implemented values with `browser_evaluate` computed styles — NOT pixel-diffing alone.
-   Measure exhaustively, not one representative value: container + parent wrapper (4-side padding,
-   margin, border, radius, background), each text node (size/weight/line-height/letter-spacing/color),
-   child gaps and left content inset, icons/checkboxes (measure the drawn element, not a 0px `<input>`),
-   dividers, and container chrome for drawers/modals (header title copy + color, close button, footer
-   CTA). Convert alpha-composited colors to their effective hex before comparing.
+   Measure exhaustively per the no-sampling doctrine above — every explicitly-sized node, not one
+   representative value: container + parent wrapper (4-side padding, margin, border, radius, background),
+   each text node (size/weight/line-height/letter-spacing/color), child gaps and left content inset,
+   icons/checkboxes (measure the drawn element, not a 0px `<input>`), dividers, container chrome for
+   drawers/modals (header title copy + color, close button, footer CTA), **and every small fixed-size
+   element inside — pill / badge / label / chip / thumbnail / counter / avatar (measure its own
+   `width`/`height`/`min-width`/`border-radius`/`gap`, not the banner it sits in)**. Convert
+   alpha-composited colors to their effective hex before comparing. Every value here goes into the
+   `--impl` manifest for `design diff`; every design number goes into `--figma` — hold BOTH before you
+   call anything a mismatch (two-numbers rule), and measure the design's own property, not a proxy.
 5. Use screenshot pixels only to cross-check what computed styles cannot settle: element offsets/
    alignment, icon asset shape/stroke, and near-black effective colors.
-6. Diff each measured value against the Step 1 expected value and classify by the table below.
+6. Diff each measured value against the Step 1 expected value and classify by the table below. Do this
+   with `cat-state.mjs design diff` (Measurement doctrine above), not by eye: assemble the `--figma`
+   inventory and the `--impl` measurements and run it until it exits 0 (no `unmeasured`/`malformed` left),
+   then take its emitted `rows` as the basis of the matrix below. A row without BOTH numbers is not a
+   finding — it is a node still to measure.
 7. **Side-by-side visual pass (required, not optional).** Open the AS-IS render and the TO-BE design
    export together and compare them directly, producing a **visual-gap list** distinct from the numeric
    diff: overall composition/alignment (is the header/badge/row on the same line and edge as the
@@ -300,6 +391,12 @@ parses and validates — do not rename keys or invent fields:
 - Per surface (unless that surface is `no_text:true`), MANDATORY rows cover `font-size`, `line-height`,
   `font-weight` for every in-scope text element, plus at least one of padding/margin/gap for spacing.
   This coverage is **per rendered variant surface** (see Surface enumeration above), not per component.
+- Beyond that mandatory floor, include a row for EVERY explicitly-sized node you enumerated (no
+  sampling — see the Measurement doctrine), especially each small fixed-size element (pill/badge/label/
+  chip/thumbnail/counter/avatar) with its `width`/`height`/`min-width`/`border-radius`/`gap`. The gate's
+  mandatory floor is per-surface, so it cannot by itself force a missing element's row — the `design diff`
+  tool is what mechanically keeps every extracted node from being dropped; run it green before assembling
+  this matrix and fold in its `rows`.
 - `waived` is `null`, or `{"reason": "<substantive reason>", "surfaces": ["<surface names covered>"],
   "user_acknowledged": true}` — see [R18] Blocker handling below; **Major only, never Critical**.
 - `not_applicable` is `null`, or `{"reason": "<substantive reason the design-sourced goal is non-UI>"}`

@@ -212,6 +212,12 @@ dialogue append --json <str|->            # G004: append-only state/dialogue-exc
 floor                                     # recompute deep-interview deterministic floor, print {floor, parts}
 receipt verify --goal GNNN                # freshness: receipt exists, anchored ledger row exists, hashes match,
                                           # goal row untouched since verified_at; exit 2 on stale/tampered
+design diff  --figma <path|-> --impl <path|->  # design-QA lane authoring aid: join the extracted Figma sized-node
+                                          # inventory against live-DOM measurements by (surface,element,property);
+                                          # emit gate-ready qa.design rows (severity via the SAME computeSeverity()
+                                          # the checkpoint gate uses) only for well-formed pairs; refuse (exit 2) on
+                                          # any unmeasured (extracted-but-not-measured) or malformed pair — the
+                                          # mechanical two-numbers rule. Read-only: touches no session state.
 ```
 
 Completion receipt v2 (field name `plan_generation_sha256` kept for continuity): at
@@ -245,7 +251,13 @@ the waiver authority). A goal with NO design source on record is byte-identical 
 behavior. Disclosed residuals (the CLI is a zero-dependency verifier): fabrication (cannot prove a
 measurement was taken), coverage-floor (cannot force the specific wrong element), ack-softness
 (acks are leader-assembled), and chat-only links (a design URL only in free-text chat, never
-persisted to spec/plan/goal, does not trigger).
+persisted to spec/plan/goal, does not trigger). The coverage-floor residual is *partially* mitigated
+by the `design diff` subcommand: once the agent lists a sized node on the `--figma` inventory, the tool
+mechanically refuses (exit 2) until that node carries a well-formed measured counterpart — so an
+extracted-but-dropped element (the pill-omission class) can no longer pass silently, and a mismatch
+asserted without both numbers (the 40px-guess class) cannot produce a row. It shares `computeSeverity()`
+with the checkpoint gate, so the two can never disagree; it remains bounded by the honesty of the
+declared inventory (it cannot force the inventory itself to be complete).
 
 Deterministic ambiguity floor (exact port):
 `floor = clamp( 0.10 × disputed_facts + 0.05 × unscored_active_components + 0.05 × min(1, auto_answered_rounds / max(scored_rounds,1)), 0, 1 )`, rounded to 2 decimals.
