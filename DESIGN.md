@@ -169,14 +169,20 @@ Write tool. Skills return receipt fields (run_id, path, sha256, verdict) — nev
 
 ## 4. Sanctioned writer CLI (`scripts/cat-state.mjs`)
 
-Node >=18 for every subcommand except `graph build`/`graph query`, which require Node 22.13.0+ and are
-the ONLY subsystem with a vendored runtime dependency: `web-tree-sitter@0.24.7` plus its JS/TS/TSX
-grammar `.wasm` files (`scripts/vendor/tree-sitter/`, git-committed, loaded only by relative path — see
-`scripts/vendor/tree-sitter/VENDOR.md`) and the builtin `node:sqlite` (unflagged at that floor; still
-"Experimental" upstream — a WATCH). Both are dynamically imported only inside the graph handlers, never
-at module top level, so a below-floor Node or an API drift in either dependency can only ever break these
-two subcommands — every other subcommand stays pure Node builtins. Subcommands (all take
-`--session <sid>`; stdin `-` accepted for JSON/file bodies):
+Node >=18 for every subcommand, INCLUDING `graph build`/`graph query`, which are the ONLY subsystem
+with vendored runtime dependencies: `web-tree-sitter@0.24.7` plus its JS/TS/TSX grammar `.wasm` files
+(`scripts/vendor/tree-sitter/`, git-committed, loaded only by relative path — see
+`scripts/vendor/tree-sitter/VENDOR.md`) for parsing, and `sql.js@1.14.1` (WASM SQLite,
+`scripts/vendor/sql.js/`, git-committed, loaded only by relative path — see
+`scripts/vendor/sql.js/VENDOR.md`) for storage. Both are dynamically imported only inside the graph
+handlers, never at module top level, so an API drift in either vendored dependency can only ever break
+these two subcommands — every other subcommand stays pure Node builtins. Neither vendored dependency
+needs anything beyond Node's built-in `WebAssembly` (available since Node 8), so there is no Node
+version floor specific to the graph subsystem — it works anywhere this plugin's own Node 18+ baseline
+does. sql.js has no cross-process concurrency control of its own (it is memory-only); the entire
+`graph build` read-modify-write critical section is instead guarded by a create-arbitrated
+single-consumer lock file (`.cat/graph/graph.db.lock`) — see the concurrency note below the subcommand
+table. Subcommands (all take `--session <sid>`; stdin `-` accepted for JSON/file bodies):
 
 ```
 init                                      # create session tree + activity marker
@@ -215,19 +221,65 @@ design visual --figma <path> --impl <path>     # design-QA lane authoring aid: p
                                           # Critical. Read-only: touches no session state (--block-threshold is
                                           # diagnostic-only; the checkpoint gate always resolves the threshold via
                                           # .cat/settings.json designQa.visualDiffBlockThreshold, default 0.75).
-graph build  [--changed-only]             # Node 22.13.0+ only: parse tracked JS/TS/TSX with the vendored
-                                          # Tree-sitter runtime, upsert into REPO-scoped .cat/graph/graph.db
-                                          # (SQLite, WAL). --changed-only skips files whose sha256 is unchanged.
-                                          # Fail-open per file: the vendored 0.24.7 parser is known to emit a
-                                          # false-positive parse_status:"partial" on some large valid files
-                                          # (e.g. this repo's own cat-state.mjs, ~70 KiB — see VENDOR.md); it
-                                          # still keeps whatever nodes/edges it managed to extract rather than
+graph build  [--changed-only]             # Node 18+: parse tracked JS/TS/TSX with the vendored Tree-sitter
+                                          # runtime, upsert into REPO-scoped .cat/graph/graph.db (sql.js/WASM
+                                          # SQLite). A create-arbitrated lock file serializes concurrent
+                                          # builds (exit 0, {ok:false, skipped:"locked"} on contention — never
+                                          # blocks, never crashes). --changed-only skips files whose sha256 is
+                                          # unchanged; a leftover -wal/-shm sidecar forces one full rebuild
+                                          # regardless (see Known limitations below). Fail-open per file: the
+                                          # vendored 0.24.7 parser is known to emit a false-positive
+                                          # parse_status:"partial" on some large valid files (e.g. this repo's
+                                          # own cat-state.mjs, ~70 KiB — see tree-sitter VENDOR.md); it still
+                                          # keeps whatever nodes/edges it managed to extract rather than
                                           # aborting the build. The graph is a HINT, not a source of truth.
-graph query  --file <path> [--depth N]    # Node 22.13.0+ only: read-only BFS over call/import edges from
+graph query  --file <path> [--depth N]    # Node 18+: read-only BFS over call/import edges from
                                           # .cat/graph/graph.db for one file's own nodes plus transitive
-                                          # callers/dependents up to --depth (default 2). HINT, not a source
+                                          # callers/dependents up to --depth (default 2). Takes no lock (reads
+                                          # the last atomically-renamed-into-place file). HINT, not a source
                                           # of truth — verify critical-path facts with Read/Grep (§9).
 ```
+
+**Concurrency model — create-arbitrated, best-effort single-consumer lock file**: sql.js is a
+memory-only engine with no cross-process locking, so `graph build`'s entire read-modify-write is
+guarded end-to-end by `.cat/graph/graph.db.lock` (git-ignored, sibling of `graph.db`). The winner is
+decided ONLY by operations that hand the loser an explicit failure — exclusive create
+(`open(...,"wx")`, i.e. `O_EXCL`) and a single-consumer `rename()` of the shared lock file itself.
+**"Overwrite an existing shared target, then re-read to confirm" is banned outright as a lock
+arbiter** — `renameSync` over an existing target always succeeds regardless of whether the target
+existed, so it gives the loser no failure to detect, and two earlier designs of this same lock both
+independently reproduced a lost-update race for exactly that reason. Staleness is judged by
+`process.kill(pid, 0)` (ESRCH ⇒ dead) OR a TTL (`GRAPH_LOCK_TTL_MS`, default 60000ms, derived from a
+measured full-build wall-time with 10x headroom — see `scripts/vendor/sql.js/VENDOR.md`; override via
+`CAT_GRAPH_LOCK_TTL_MS`); corrupt/empty lock content falls back to the lock file's own mtime for the
+TTL decision, so a holder that crashed between creating the lock and writing its body still ages out.
+The retry loop is capped (50 attempts) to avoid livelock, failing open to `{ok:false,
+skipped:"locked"}`. **Behavior change from the previous `node:sqlite` engine**: `node:sqlite`'s WAL +
+`busy_timeout` (~5s) waited out contention; this lock fails open *immediately* on contention instead
+(no wait) — acceptable for a repository-scoped single DB, since a concurrent lane's own rebuild
+eventually repopulates it, but it does shift the freshness/skip-rate profile, worth knowing if `graph
+build` calls show up as `skipped:"locked"` more often than the old engine's occasional busy-wait.
+
+**Known limitation — the lock is best-effort mutual exclusion, not exactly-one-winner**: the
+stale-lock reclaim above is a content-blind `rename()`, so under RARE contention on a lock left stale
+by a crashed builder, a slow racer can rename away a *different*, freshly created live lock instead of
+the stale generation it judged, letting two builders believe they both hold it and both proceed to
+build. This is not limited to 3+ simultaneous builders — it can occur with as few as two, because the
+reclaiming racer's own immediate retry (re-creating the lock) can itself race a second racer's delayed
+rename of the same path; more racers only make the window easier to hit, not required to open it at
+all. (An earlier revision tried to close this with a content-reverify-then-`link()`-restore step; that
+restore itself could lose a further race under 3+ racers and silently drop the live lock it was
+restoring, orphaning the real holder — a lost-update strictly worse than the case it was guarding
+against, while still not achieving exactly-one-winner even for two racers — so it was removed rather
+than chased further; stale-lock reclaim races are a known-hard problem and this lock does not claim to
+solve them exactly.) This is safe to leave best-effort because the actual data-integrity guarantee for
+`graph.db` does not come from the lock at all — it comes from the atomic
+`db.export()` → tmp file → `renameSync` commit in `cmdGraphBuild` (see the write path above): every
+write is a complete, valid SQLite snapshot of the same repository, `PRAGMA integrity_check` is always
+`ok`, and two overlapping builders can at worst produce a redundant rebuild whose result is atomically
+replaced by the other's valid snapshot — never a corrupt or torn `graph.db`. Scope: this relies on
+local-filesystem `O_EXCL`/`rename()` atomicity (see the NFS caveat in
+`scripts/vendor/sql.js/VENDOR.md`).
 
 **Known limitation — `--changed-only` cross-file staleness**: `--changed-only`
 is a fast incremental mode that skips reparsing any file whose sha256 is
@@ -257,6 +309,18 @@ This is why `graph build`/`graph query` are ALSO invoked automatically by the or
 automation): one full `graph build` (no `--changed-only`) at run-start sidesteps the false positive
 entirely, with `--changed-only` used only at later phase-starts within the same run once a full
 build has already established a clean `full_build_generation`.
+
+**Legacy `-wal`/`-shm` sidecars (sql.js migration)**: a `graph.db` built by the previous `node:sqlite`
+engine (WAL journal mode) may leave `graph.db-wal`/`graph.db-shm` sidecar files behind if a build
+crashed mid-write. `graph build` deletes both on sight (best-effort) at the start of every invocation
+and — since sql.js reads only the main `.db` file and knows nothing about WAL sidecars, so their
+presence is itself the signal that this DB predates the migration and may be missing an uncommitted
+tail — forces that one invocation to perform a FULL rebuild regardless of `--changed-only` (subsequent
+calls respect the flag normally again). **Residual, undocumented-by-code window**: a `graph query`
+called BEFORE the first post-upgrade `graph build` runs cannot detect or react to a stale sidecar
+situation (it never touches sidecars) — it may return a stale pre-crash snapshot silently in that
+narrow window. Always let the orchestrator's run-start full `graph build` complete before relying on
+`graph query` output.
 
 Completion receipt v2 (field name `plan_generation_sha256` kept for continuity): at
 `goal checkpoint --status complete`, AFTER the goal row is mutated (status, `completed_at`,
@@ -352,15 +416,15 @@ code fences, error/stack traces (their presence suggests ladder 1/3/4 over 2).
 **Graph advisory line** (`graphAdvisoryLine`, gated on a `file-path`/`symbol` signal firing): informs
 the MAIN thread only whether `.cat/graph/graph.db` exists / how fresh it is — it makes no claim
 about, and has no effect on, what an Agent-tool-spawned subagent receives (see §6 Code-graph
-automation for that contract). `fs.statSync` ONLY: never opens the DB (no `node:sqlite` import),
-never spawns a build, own isolated try/catch (a failure drops only this line, never the router).
-Node-floor-aware, duplicating the `[22,13,0]` floor locally rather than importing `cat-state.mjs`:
-below floor → `[graph: needs Node 22.13+ (have {version}) — code exploration falls back to
-Read/Grep]`; `.cat/graph/graph.db` absent (`ENOENT`) → `[graph: not built yet —
-cat-harness:ralplan/ultragoal/team auto-refresh it at workflow start; Read/Grep until then]`;
-present → `[graph: last built {age} ago (.cat/graph/graph.db) — HINT only, verify with Read/Grep]`;
-any other stat error (inaccessible/corrupt path) → the line is omitted entirely, rest of the router
-block intact.
+automation for that contract). `fs.statSync` ONLY: never opens the DB (no `node:sqlite`/sql.js
+import), never spawns a build, own isolated try/catch (a failure drops only this line, never the
+router). No Node-version floor to duplicate anymore — `graph build`/`graph query` moved off
+`node:sqlite` onto vendored sql.js (WASM SQLite), which needs only Node's built-in `WebAssembly`, so
+the graph feature works on this plugin's own Node 18+ baseline unconditionally. `.cat/graph/graph.db`
+absent (`ENOENT`) → `[graph: not built yet — cat-harness:ralplan/ultragoal/team auto-refresh it at
+workflow start; Read/Grep until then]`; present → `[graph: last built {age} ago
+(.cat/graph/graph.db) — HINT only, verify with Read/Grep]`; any other stat error
+(inaccessible/corrupt path) → the line is omitted entirely, rest of the router block intact.
 
 ### `pretool` (PreToolUse, matcher `Edit|MultiEdit|Write|NotebookEdit|Bash|Skill|Agent|Task`)
 Read active states. Blocking phases: deep-interview `interviewing`; ralplan `planner|review|revision|post-interview|adr|final`;
@@ -553,11 +617,11 @@ nothing here changes `scripts/cat-state.mjs`'s CLI contract, only who calls it a
 - **Trigger**: ONE full `graph build` (no `--changed-only`) at the FIRST planner/executor spawn of a
   run; `graph build --changed-only` at every subsequent phase-start within the SAME run (ralplan
   step 5b revision, ultragoal's later goal-loop iterations, team's rare targeted re-spawn). Always
-  best-effort and non-blocking: a non-zero exit, `EXIT_USAGE` (Node < 22.13), or `{ok:false,
-  skipped:"locked"}` is a silent fallback — the workflow proceeds exactly as it did before this
-  automation existed. This is a prompt-level cadence (SKILL.md prose, not code-enforced); a redundant
-  `graph build` call is cheap and harmless, never broken, so the "at most once per run" contract has
-  no automated test oracle beyond CLI idempotency.
+  best-effort and non-blocking: a non-zero exit or `{ok:false, skipped:"locked"}` (lock contention) is
+  a silent fallback — the workflow proceeds exactly as it did before this automation existed. This is
+  a prompt-level cadence (SKILL.md prose, not code-enforced); a redundant `graph build` call is cheap
+  and harmless, never broken, so the "at most once per run" contract has no automated test oracle
+  beyond CLI idempotency.
 - **Injection**: when a task/goal/lane names specific file paths (cap 3, or ≤3 per lane for team),
   `graph query --file <path> --depth 2` results are spliced into the dispatch prompt as a
   `[blast-radius HINT]` block — **planner dispatch (ralplan) and executor dispatch (ultragoal, team)
@@ -651,27 +715,37 @@ orchestrator via artifact paths (see §6), never inline dumps of plan bodies.
   decision. This governs only what the USER reads — agent/subagent PROMPT internals stay technical.
 - All JSON written by hooks/CLI: 2-space indent, trailing newline. All timestamps ISO8601 UTC.
 - Never `console.log` debug noise from hooks (stdout is the contract). Errors → stderr + audit.jsonl.
-- **Zero-install runtime, ONE deliberate dependency exception — it does not require an end-user `npm
+- **Zero-install runtime, TWO deliberate vendored dependencies — neither requires an end-user `npm
   install`**: `hooks/` is pure Node builtins throughout; `scripts/cat-state.mjs` is pure Node builtins
   EXCEPT its `graph build`/`graph query` subcommands (§4). There is no npm-dependency subsystem anywhere
   else in the repo.
-  1. **Vendored runtime exception (`scripts/cat-state.mjs` graph subcommands, Node 22.13.0+ only)**:
-     `web-tree-sitter@0.24.7` plus JS/TS/TSX grammar `.wasm` files are vendored and git-committed under
+  1. **Vendored parser (`scripts/cat-state.mjs` graph subcommands, Node 18+)**: `web-tree-sitter@0.24.7`
+     plus JS/TS/TSX grammar `.wasm` files are vendored and git-committed under
      `scripts/vendor/tree-sitter/` (see that directory's `VENDOR.md` for pinned versions, sha256s, and
      why `0.24.7` rather than the nominal-latest `0.26.11` — a grammar-ABI incompatibility with
      `tree-sitter-wasms@0.1.13`), loaded only by relative path so no `node_modules` resolution is ever
-     needed. Paired with the builtin `node:sqlite` (unflagged at 22.13.0+; still "Experimental" upstream
-     — a WATCH), dynamically imported only inside the graph handlers (blast-radius confinement: an API
-     drift in either can only break these two subcommands). Every other subcommand, and every hook,
-     still runs on Node 18+ with zero dependencies of any kind. This vendored tree is git-committed, not
-     npm-installed, so it does not reintroduce an `npm install` step for end users.
+     needed.
+  2. **Vendored storage engine (`scripts/cat-state.mjs` graph subcommands, Node 18+)**: `sql.js@1.14.1`
+     (WASM SQLite, MIT) is vendored and git-committed under `scripts/vendor/sql.js/` (see that
+     directory's `VENDOR.md` for pinned version, sha256s, the `GRAPH_LOCK_TTL_MS` derivation, and the
+     local-filesystem scoping note on the lock's atomicity guarantees), loaded only by relative path.
+     Replaces the previous builtin `node:sqlite` dependency (which forced a Node 22.13.0+ floor on the
+     graph subsystem alone) — sql.js needs only Node's built-in `WebAssembly`, so the graph subsystem now
+     shares this plugin's ordinary Node 18+ baseline with no separate floor.
+
+  Both are dynamically imported only inside the graph handlers (blast-radius confinement: an API drift
+  in either can only break these two subcommands). Every other subcommand, and every hook, still runs on
+  Node 18+ with zero dependencies of any kind. Both vendored trees are git-committed, not npm-installed,
+  so neither reintroduces an `npm install` step for end users.
 - `.cat/graph/graph.db` is the one documented exception to the per-session `.cat/_session-{id}/` layout
   (§3): it is REPO-scoped (a sibling of `.cat/settings.json`), because a code graph describes the
   repository, not a single session. It still falls fully under the G1 writer-policy doctrine (§3): only
   `cat-state.mjs graph build` may mutate it, same as every other runtime-owned path.
-- Version 1.0.0 everywhere as of this change (bump on every released change — the plugin cache is keyed
-  by version; same-version pushes may not reach installed users). BREAKING: the Node floor moves from 18
-  to 22.13.0 for the new `graph build`/`graph query` subcommands (see CHANGELOG.md).
+- Version 1.4.0 everywhere as of this change (bump on every released change — the plugin cache is keyed
+  by version; same-version pushes may not reach installed users). The 1.3.0 → 1.4.0 change replaces the
+  graph subsystem's storage engine (`node:sqlite` → vendored sql.js), which LOWERS its Node floor back
+  down to this plugin's ordinary Node 18+ baseline (reversing the earlier 1.0.0 → 1.3.0 breaking bump to
+  22.13.0 for `graph build`/`graph query` — see CHANGELOG.md for both entries).
 
 ## Fidelity sources (read before writing)
 

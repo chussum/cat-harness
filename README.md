@@ -39,8 +39,8 @@ cat-harness는 [gajae-code](https://github.com/Yeachan-Heo/gajae-code)의 작업
   레인**이 추가로 돕니다: Figma 정책 추출 → 구현 매핑 → Playwright 캡처 →
   computed-style 대조 → 심각도 분류. Critical/Major 갭은 완료를 차단합니다.
   (Playwright MCP 필요, Figma MCP 권장 / Jira·엑셀 리포트·TC 생성은 범위 밖)
-- 요구 사항: PATH에 Node.js 22.13.0 이상 (코드-그래프 `graph build`/`graph query`
-  서브커맨드에만 필요; 나머지 기능은 Node.js 18 이상에서 그대로 동작). 설치는 아래
+- 요구 사항: PATH에 Node.js 18 이상 (코드-그래프 `graph build`/`graph query`
+  서브커맨드를 포함한 모든 기능이 Node.js 18 이상에서 동작합니다). 설치는 아래
   [Install](#install) 참조.
 
 ---
@@ -94,9 +94,10 @@ This informs *your* own next move; it makes no promise about what a
 subagent (planner/architect/critic/executor) receives — that is governed
 entirely by the orchestrated workflows below (`ralplan`/`ultragoal`/`team`
 auto-refresh the graph and, for planner/executor only, splice a
-`[blast-radius HINT]` into the dispatch prompt). On a Node below the graph's
-22.13.0 floor, the advisory says so plainly rather than implying a build that
-can never happen.
+`[blast-radius HINT]` into the dispatch prompt). The graph subsystem has no
+Node version floor of its own (it runs on this plugin's ordinary Node 18+
+baseline), so the advisory only ever reports built / not-yet-built / fresh —
+never a version gate.
 
 **Escapes**: prefix your prompt with `!` or `force:` to bypass gating for that
 turn. An explicit workflow choice by you always wins. One rule has no escape:
@@ -268,8 +269,9 @@ Everything lives under `<project>/.cat/`, per session:
 ```
 .cat/
 ├── settings.json                                # user config (see Configuration)
-├── graph/graph.db                               # REPO-scoped code graph (SQLite WAL, + -wal/-shm) — the
-│                                                 #   one artifact here that is NOT per-session
+├── graph/graph.db                               # REPO-scoped code graph (sql.js/WASM SQLite; plus a
+│                                                 #   short-lived .lock file during builds) — the one
+│                                                 #   artifact here that is NOT per-session
 └── _session-{session_id}/
     ├── .session-activity.json                   # touched on every mutation
     ├── state/{skill}-state.json                 # per-skill phase/ambiguity envelope
@@ -310,6 +312,15 @@ DB was actually empty. `ralplan`/`ultragoal`/`team` avoid this in practice by
 running one full `graph build` at run-start (see below) and `--changed-only`
 only at later phase-starts within the same run.
 
+**Legacy `-wal`/`-shm` sidecars**: a `graph.db` built by the previous
+`node:sqlite`-based engine (pre-1.4.0) may have left `-wal`/`-shm` sidecar
+files behind if a build crashed mid-write. `graph build` deletes both on
+sight and forces one full rebuild for that invocation regardless of
+`--changed-only` (subsequent calls respect the flag again). A `graph query`
+called BEFORE that first post-upgrade `graph build` runs cannot detect this
+and may silently return a stale pre-crash snapshot in that narrow window —
+let the orchestrator's run-start full build complete first.
+
 **Automatic refresh inside the four workflows**: `ralplan`, `ultragoal`, and
 `team` run `graph build` for you — one full build at the first
 planner/executor spawn of a run, `--changed-only` at every later phase-start
@@ -318,23 +329,26 @@ bounded `[blast-radius HINT]` (`graph query` results) into the **planner**
 (ralplan) or **executor** (ultragoal, team) dispatch prompt only. This never
 reaches the architect or critic dispatch — they always form their own map via
 Read/Grep/Glob, preserving the consensus gate's fresh-eyes review. Always
-best-effort: a locked DB, a below-floor Node, or any build error is a silent,
-non-blocking fallback to the pre-automation behavior described above.
+best-effort: a locked DB, or any build error, is a silent, non-blocking
+fallback to the pre-automation behavior described above.
 
 ## Requirements
 
-- **Node.js 22.13.0 or newer on PATH for the full feature set.** Hooks and
-  the state CLI run as `node "${CLAUDE_PLUGIN_ROOT}/..."`. Only the
-  code-graph subcommands (`graph build`, `graph query`) require this floor —
-  they dynamically import Node's builtin `node:sqlite` (unflagged at
-  22.13.0+; still "Experimental" upstream — a WATCH) only inside their own
-  handlers. Every other hook and subcommand keeps running on Node 18+.
-- **One vendored dependency, not an npm install.** `graph build`/`graph
+- **Node.js 18 or newer on PATH — no separate floor for any feature.**
+  Hooks and the state CLI run as `node "${CLAUDE_PLUGIN_ROOT}/..."`. The
+  code-graph subcommands (`graph build`, `graph query`) run on this same
+  Node 18+ baseline as everything else — they use two vendored WASM
+  runtimes (below), never Node's builtin `node:sqlite`, so there is no
+  version gate specific to the graph feature.
+- **Two vendored dependencies, not an npm install.** `graph build`/`graph
   query` parse JS/TS/TSX with `web-tree-sitter@0.24.7` plus its grammar
   `.wasm` files, vendored and git-committed under
   `scripts/vendor/tree-sitter/` (~5.5 MiB, loaded only by relative path —
-  see `scripts/vendor/tree-sitter/VENDOR.md`). There is still nothing for
-  end users to `npm install`: clone or install the plugin and go.
+  see `scripts/vendor/tree-sitter/VENDOR.md`), and store the resulting graph
+  with `sql.js@1.14.1` (WASM SQLite, ~692 KiB), vendored and git-committed
+  under `scripts/vendor/sql.js/` (loaded only by relative path — see
+  `scripts/vendor/sql.js/VENDOR.md`). There is still nothing for end users
+  to `npm install`: clone or install the plugin and go.
 - Claude Code with plugin support.
 
 ## Install

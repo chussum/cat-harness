@@ -626,23 +626,12 @@ const ROUTER_LADDER = [
 // effect on, what an Agent-tool-spawned subagent (planner/architect/critic/
 // executor) receives — that is governed entirely by the orchestrator
 // SKILL.md injection contract (DESIGN.md §6). fs.statSync ONLY: never opens
-// the DB (no `node:sqlite` import), never spawns a build. Locally duplicates
-// the GRAPH_NODE_FLOOR floor (cat-state.mjs ~2590) instead of importing
-// cat-state.mjs, keeping this hook's zero-heavy-dependency contract intact.
+// the DB (no `node:sqlite`/sql.js import), never spawns a build. No Node
+// version floor to duplicate here anymore — `graph build`/`graph query`
+// moved off `node:sqlite` onto vendored sql.js (WASM SQLite), which needs
+// only Node's built-in WebAssembly (available since Node 8), so the graph
+// feature now works on this plugin's own Node 18+ baseline unconditionally.
 // ---------------------------------------------------------------------------
-const GRAPH_ADVISORY_NODE_FLOOR = [22, 13, 0];
-
-function graphAdvisoryNodeAtLeast(version, floor) {
-  const parts = String(version)
-    .split(".")
-    .map(n => parseInt(n, 10) || 0);
-  for (let i = 0; i < floor.length; i++) {
-    const have = parts[i] ?? 0;
-    if (have > floor[i]) return true;
-    if (have < floor[i]) return false;
-  }
-  return true;
-}
 
 function formatGraphAdvisoryAge(ms) {
   const sec = Math.max(0, Math.floor(ms / 1000));
@@ -661,9 +650,6 @@ function formatGraphAdvisoryAge(ms) {
  * the caller's isolation contract — never throws here on a stat error).
  */
 function graphAdvisoryLine(cwd) {
-  if (!graphAdvisoryNodeAtLeast(process.versions.node, GRAPH_ADVISORY_NODE_FLOOR)) {
-    return `[graph: needs Node 22.13+ (have ${process.versions.node}) — code exploration falls back to Read/Grep]`;
-  }
   const dbPath = path.join(cwd, ".cat", "graph", "graph.db");
   let stat;
   try {

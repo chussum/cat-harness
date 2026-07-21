@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.4.0 — Code-graph storage engine: `node:sqlite` → vendored sql.js (WASM SQLite); Node floor back to 18+ (2026-07-22)
+
+Non-breaking MINOR (lowers a requirement, doesn't raise one). `graph build`/`graph query`
+(`scripts/cat-state.mjs`) moved off the builtin `node:sqlite` module (experimental, unflagged only
+at Node 22.13.0+) onto a vendored, git-committed **sql.js@1.14.1** (WASM SQLite) build — same
+pattern as the existing `web-tree-sitter` vendoring. This reverses the 1.3.0-era Node floor: the
+graph subsystem now runs on this plugin's ordinary Node 18+ baseline, the same as every other
+subcommand, instead of requiring a separately-pinned 22.13.0+ runtime.
+
+- **Storage engine swap (`cmdGraphBuild`/`cmdGraphQuery`)**: SQL schema, indexes
+  (`idx_nodes_file`, `idx_edges_to`, `idx_edges_from`), and `graph query`'s output JSON shape are
+  byte-for-byte unchanged — only the engine underneath changed. sql.js reads/writes the same
+  on-disk SQLite file format `node:sqlite` did, so an existing `graph.db` is read without a forced
+  migration. Every sql.js prepared statement and DB handle is explicitly finalized (`.free()` /
+  `db.close()`) — sql.js has no GC finalizer for these, unlike `node:sqlite`.
+- **New: create-arbitrated, best-effort single-consumer lock file** (`.cat/graph/graph.db.lock`).
+  sql.js is memory-only with no cross-process locking of its own, so `graph build`'s entire
+  read-modify-write is now guarded end-to-end by a lock file whose winner is decided ONLY by
+  operations that hand the loser an explicit failure — exclusive create (`open(...,"wx")`) and a
+  single-consumer `rename()` of the shared lock itself. "Overwrite an existing shared target, then
+  re-read to confirm" is banned outright as a lock arbiter — exercised, not assumed, via
+  deterministic multi-builder race tests in `scripts/cat-state.test.mjs` that force racers to the
+  same contention point via a shared barrier rather than relying on wall-clock luck. Staleness:
+  `process.kill(pid,0)` (ESRCH) OR a measured-not-guessed TTL (`GRAPH_LOCK_TTL_MS`, default
+  60000ms, see `scripts/vendor/sql.js/VENDOR.md`; override via `CAT_GRAPH_LOCK_TTL_MS`). Behavior
+  change: lock contention now fails open *immediately* (no wait), unlike the old engine's
+  `busy_timeout` (~5s wait) — see DESIGN.md §4. **Honest scope, not exactly-one-winner**: the
+  lock's mutual exclusion is best-effort — under rare contention on a lock left stale by a crashed
+  builder (not limited to 3+ simultaneous builders; the reclaiming racer's own immediate retry can
+  itself race a second racer's delayed reclaim of the same path), a content-blind stale-lock
+  reclaim can rarely let two builders both proceed. This is safe because the actual
+  data-integrity guarantee is the atomic `db.export()`→tmp→`renameSync` commit, not the lock:
+  `graph.db` is always a complete, valid snapshot (`PRAGMA integrity_check` always `ok`), and the
+  worst case of a double-build is a redundant rebuild, never corruption — see DESIGN.md §4 Known
+  limitations and the 3+-racer integrity test in `scripts/cat-state.test.mjs`.
+- **New: legacy `-wal`/`-shm` sidecar handling**. A `graph.db` built by the pre-1.4.0 (WAL-mode
+  `node:sqlite`) engine may have left `-wal`/`-shm` sidecars behind after a crash; sql.js never
+  produces or reads these. `graph build` now deletes both on sight and forces one full rebuild for
+  that invocation regardless of `--changed-only`. Residual, undocumented-by-code window: a `graph
+  query` called before the first post-upgrade `graph build` cannot detect this and may return a
+  stale pre-crash snapshot (see DESIGN.md/README.md Known Limitations).
+- **Node floor removal**: `GRAPH_NODE_FLOOR`, `requireGraphNodeFloor()`, and the now-dead
+  `graphNodeVersionAtLeast()` are gone from `scripts/cat-state.mjs`; the router's graph advisory
+  (`hooks/cat-hook.mjs`) no longer duplicates a Node-floor check either — it only ever reports
+  built / not-yet-built / fresh now.
+- **New vendored dependency**: `scripts/vendor/sql.js/` (sql-wasm.js + sql-wasm.wasm, MIT,
+  ~692 KiB, git-committed, loaded only by relative path — see that directory's `VENDOR.md`).
+  `scripts/vendor/tree-sitter/` (parsing) is unchanged.
+- Docs: DESIGN.md §4/§9 and the hook-advisory section, README.md (requirements, state layout, Known
+  limitations), rewritten for the new engine and floor.
+
 ## 1.3.0 — Code-graph auto-refresh + planner/executor-only blast-radius injection (2026-07-21)
 
 Non-breaking MINOR. Closes the gap between `graph build`/`graph query` existing in

@@ -2,11 +2,11 @@
 /**
  * cat-state.mjs — the single sanctioned writer for cat-harness runtime state.
  * Implements DESIGN.md §4 exactly. Every subcommand is a pure Node builtin
- * (node >= 18) EXCEPT `graph build` and `graph query`, which use a vendored
- * web-tree-sitter WASM runtime (scripts/vendor/tree-sitter/, loaded only by
- * relative path) plus the built-in node:sqlite module — both require Node
- * 22.13.0 or newer (see the guard at the entry of each graph handler; every
- * other subcommand keeps working below that floor).
+ * (node >= 18), INCLUDING `graph build` and `graph query`, which use two
+ * vendored WASM runtimes loaded only by relative path — web-tree-sitter
+ * (scripts/vendor/tree-sitter/) for parsing and sql.js (scripts/vendor/sql.js/)
+ * for storage — so there is no Node-version floor beyond the plugin's own
+ * Node 18+ baseline (no `node:sqlite`, no native/prebuilt-binary dependency).
  *
  * Subcommands (all take --session <sid>; `-` reads stdin for JSON/file bodies):
  *   init
@@ -22,8 +22,8 @@
  *   receipt verify --goal GNNN
  *   design diff  --figma <path|-> --impl <path|->
  *   design visual --figma <path> --impl <path> [--major-threshold N] [--block-threshold N] [--exclude <json>]
- *   graph build  [--changed-only]           (Node 22.13.0+, repo-scoped .cat/graph/graph.db)
- *   graph query  --file <path> [--depth N]  (Node 22.13.0+, repo-scoped .cat/graph/graph.db)
+ *   graph build  [--changed-only]           (Node 18+, repo-scoped .cat/graph/graph.db)
+ *   graph query  --file <path> [--depth N]  (Node 18+, repo-scoped .cat/graph/graph.db)
  *
  * Exit codes: 0 ok; 1 usage/unexpected error; 2 contract refusal (invalid envelope,
  * invalid phase edge, trigger inconsistency, failed quality gate, stale/tampered
@@ -2576,19 +2576,29 @@ async function cmdDesignVisual(ctx, flags) {
 
 // ------------------------------------------------------------- graph (WS2)
 //
-// `graph build` / `graph query` are the ONLY subcommands that import
-// node:sqlite or the vendored web-tree-sitter WASM runtime under
-// scripts/vendor/tree-sitter/ — both imports are confined to this section
-// (dynamic `import("node:sqlite")` inside the handlers, never a top-level
-// import) so an API drift in either experimental/vendored dependency can
-// only ever break these two subcommands (blast-radius containment, plan
-// "동시성 모델"/"Node 런타임 하한" sections). The graph DB is REPOSITORY
-// scoped (.cat/graph/graph.db, a sibling of .cat/settings.json) — --session
-// is required for CLI parsing uniformity (makeCtx) but ctx.root is never
-// referenced here, only ctx.projectRoot (same pattern as `design diff`).
+// `graph build` / `graph query` are the ONLY subcommands that import the
+// vendored sql.js (WASM SQLite) runtime under scripts/vendor/sql.js/ or the
+// vendored web-tree-sitter WASM runtime under scripts/vendor/tree-sitter/ —
+// both imports are confined to this section (dynamic relative-path import
+// inside the handlers, never a top-level import) so an API drift in either
+// vendored dependency can only ever break these two subcommands
+// (blast-radius containment, plan "동시성 모델"/"Node 런타임 하한" sections).
+// The graph DB is REPOSITORY scoped (.cat/graph/graph.db, a sibling of
+// .cat/settings.json) — --session is required for CLI parsing uniformity
+// (makeCtx) but ctx.root is never referenced here, only ctx.projectRoot
+// (same pattern as `design diff`).
+//
+// Storage engine: sql.js (scripts/vendor/sql.js/, see VENDOR.md) — a
+// pure-WASM, in-process SQLite build with no `node:sqlite` dependency, so
+// `graph build`/`graph query` work on any Node 18+ (no version floor). Since
+// sql.js has no cross-process file locking of its own (it is a memory-only
+// engine; the on-disk file is just an opaque export/import blob), the
+// entire read-modify-write critical section in `cmdGraphBuild` is guarded by
+// a create-arbitrated single-consumer LOCK FILE (`acquireGraphLock`/
+// `releaseGraphLock`, .cat/graph/graph.db.lock) instead. `graph query` never
+// takes this lock — it only ever reads the last atomically-renamed-into-
+// place `graph.db`, so there is no torn read to guard against.
 
-const GRAPH_NODE_FLOOR = [22, 13, 0];
-const GRAPH_BUSY_TIMEOUT_MS = 5000;
 const GRAPH_SOURCE_EXTENSIONS = new Set([".js", ".mjs", ".ts", ".tsx"]);
 const GRAPH_EXCLUDE_PREFIXES = ["node_modules/", ".cat/", "scripts/vendor/"];
 const GRAPH_GRAMMAR_BY_EXT = {
@@ -2598,6 +2608,14 @@ const GRAPH_GRAMMAR_BY_EXT = {
   ".tsx": "tree-sitter-tsx.wasm",
 };
 const GRAPH_FUNCTION_VALUE_TYPES = new Set(["arrow_function", "function_expression", "function"]);
+
+// Create-arbitrated lock tuning (scripts/vendor/sql.js/VENDOR.md "GRAPH_LOCK_TTL_MS
+// derivation" — measured, not guessed: max(measured full-build-ms * 10, 60000)).
+// Override for monorepos whose real full build legitimately exceeds ~6s.
+const GRAPH_LOCK_TTL_MS = Number(process.env.CAT_GRAPH_LOCK_TTL_MS) || 60000;
+// Bounded retry loop cap for acquireGraphLock — prevents livelock if the
+// create-arbitrated reclaim keeps losing the wx-create race indefinitely.
+const GRAPH_LOCK_MAX_RETRIES = 50;
 
 const GRAPH_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS files (
@@ -2635,40 +2653,298 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 `;
 
-function graphNodeVersionAtLeast(floor) {
-  const parts = String(process.versions.node)
-    .split(".")
-    .map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < floor.length; i++) {
-    const have = parts[i] ?? 0;
-    if (have > floor[i]) return true;
-    if (have < floor[i]) return false;
-  }
-  return true;
-}
-
-/**
- * Entry guard for `graph build`/`graph query` ONLY — never called from
- * main()'s top level, so every other subcommand keeps working below this
- * floor. Must run before any node:sqlite or vendored-parser import so a
- * below-floor Node gets this message instead of a cryptic import failure.
- */
-function requireGraphNodeFloor(label) {
-  if (!graphNodeVersionAtLeast(GRAPH_NODE_FLOOR)) {
-    process.stderr.write(`cat-state: ${label} requires Node 22.13.0 or newer, found ${process.versions.node}\n`);
-    process.exit(EXIT_USAGE);
-  }
-}
-
 function graphDbPath(ctx) {
   return path.join(ctx.projectRoot, ".cat", "graph", "graph.db");
 }
 
-function isGraphLockError(err) {
-  return !!(err && err.code === "ERR_SQLITE_ERROR" && /locked|busy/i.test(String(err.message || "")));
+function graphLockPath(ctx) {
+  return `${graphDbPath(ctx)}.lock`;
 }
 
-/** Vendored web-tree-sitter loader — always by relative path (never a bare specifier). */
+/**
+ * Recognizes filesystem errors that legitimately arise from OTHER processes
+ * racing on the create-arbitrated lock path itself (EEXIST/ENOENT churn on
+ * lockPath) or from being unable to touch it at all (EACCES/EBUSY) — the
+ * fail-open signal for `{ok:false, skipped:"locked"}`. node:sqlite's old
+ * "database is locked"/"database is busy" errors no longer apply: sql.js is
+ * an in-memory engine with no cross-process SQLite-level locking, so all
+ * lock contention now surfaces here instead, from acquireGraphLock().
+ */
+function isGraphLockError(err) {
+  return !!(err && ["EEXIST", "ENOENT", "EACCES", "EBUSY"].includes(err.code));
+}
+
+/**
+ * Create-arbitrated single-consumer lock (plan stage-03-revision.md Options
+ * §2 — the crux of this migration). The winner is decided ONLY by
+ * operations that hand the loser an explicit failure (ENOENT/EEXIST):
+ * exclusive create (the `wx` flag, O_EXCL) and a single-consumer rename of
+ * the shared lock file itself. "Overwrite-then-reread" is PERMANENTLY
+ * BANNED as a lock arbiter here — a `renameSync` over an EXISTING target
+ * always succeeds regardless of whether the target existed before, so it
+ * hands the loser no failure to detect. Two earlier revisions of this exact
+ * lock (unlink-then-recreate, then rename-over-and-reread) both reproduced a
+ * lost-update race for precisely this reason (see plan pre-mortem
+ * scenario 1) — do not reintroduce either pattern.
+ *
+ * HONESTY NOTE (best-effort, not exactly-one-winner): the stale-lock reclaim
+ * in step 3 below is a content-BLIND `renameSync(lockPath -> aside)`. Under
+ * RARE contention on a lock left stale by a crashed builder, a slow racer
+ * can content-blind-rename a DIFFERENT racer's brand-new, live lock instead
+ * of the stale generation it judged, letting two builders believe they both
+ * hold the lock. This is NOT limited to 3+ racers — empirically (see the
+ * executor receipt / scripts/cat-state.test.mjs) it can occur with as few as
+ * TWO total racers, because the reclaimer's OWN next-attempt wx-create can
+ * itself race a second racer's delayed rename of the same path; 3+ racers
+ * only make the window easier to hit, not required to open it at all. This
+ * is intentionally NOT chased further (a content-reverify + restore was
+ * tried and removed — see the comment at the step-3 reclaim below — it
+ * traded this bug for a worse one under 3+ racers, an orphaned live lock,
+ * while still not achieving exactly-one-winner even for 2). It is safe to
+ * leave best-effort because graph.db's real integrity guarantee is the
+ * atomic db.export()->tmp->renameSync commit in cmdGraphBuild, not lock
+ * exclusivity: overlapping builders can at worst cause a redundant rebuild,
+ * never a corrupt or torn graph.db. See DESIGN.md's graph/concurrency
+ * section and Known Limitations.
+ *
+ * Returns true (HELD — caller now owns the critical section, must release
+ * via releaseGraphLock in a finally) or false (not acquired — either a live
+ * lock is held by someone else, or the bounded retry cap was hit; both map
+ * to the same fail-open `{ok:false, skipped:"locked"}` response).
+ */
+function acquireGraphLock(lockPath) {
+  // Test-only synchronization hook (never set in production use): when
+  // CAT_GRAPH_LOCK_TEST_BARRIER points at a path, block here — before this
+  // process's very FIRST wx-create attempt — until that path exists. This
+  // lets scripts/cat-state.test.mjs force N racing `graph build` processes
+  // to begin contending for the SAME pre-planted lock at the same instant,
+  // deterministically (never relying on wall-clock process-startup jitter,
+  // which could let one racer finish an entire build before the other even
+  // starts — no real overlap, hence no real test of the race at all).
+  const testBarrier = process.env.CAT_GRAPH_LOCK_TEST_BARRIER;
+  if (testBarrier) {
+    // Announce readiness (best-effort) so the test harness can wait for
+    // EVERY racer to actually reach this point — not guess a fixed sleep —
+    // before releasing the shared barrier. Immune to Node startup/module-
+    // parse jitter between racers, which a fixed-delay guess is not.
+    try {
+      fs.writeFileSync(`${testBarrier}.ready.${process.pid}`, "1");
+    } catch {
+      /* best-effort */
+    }
+    const startDeadline = Date.now() + 5000; // bounded — a broken test fails fast instead of hanging
+    while (!fs.existsSync(testBarrier) && Date.now() < startDeadline) {
+      /* tight synchronous poll — test-only code path */
+    }
+  }
+
+  for (let attempt = 0; attempt < GRAPH_LOCK_MAX_RETRIES; attempt++) {
+    // 1. Exclusive create — the FIRST winner-arbiter. Success == HELD. This
+    // is also where a reclaimed-stale-lock race loops back to: exactly one
+    // racer's wx-create succeeds once the stale lock has been moved aside.
+    let fd = null;
+    try {
+      fd = fs.openSync(lockPath, "wx");
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+    }
+    if (fd !== null) {
+      fs.writeSync(fd, `${process.pid}:${Date.now()}`);
+      fs.closeSync(fd);
+      return true;
+    }
+
+    // 2. EEXIST — read and judge the existing lock.
+    let content;
+    try {
+      content = fs.readFileSync(lockPath, "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") continue; // vanished between create() and read() — retry from 1
+      throw err;
+    }
+    const match = /^(\d+):(\d+)$/.exec(content.trim());
+    let stale;
+    if (match) {
+      const [, pidStr, tsStr] = match;
+      const pid = parseInt(pidStr, 10);
+      const ts = parseInt(tsStr, 10);
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch (err) {
+        // ESRCH: no such process => definitely dead. Anything else (notably
+        // EPERM — process exists, caller just lacks signal permission) is
+        // NOT evidence of death, so `alive` stays true.
+        if (err.code === "ESRCH") alive = false;
+      }
+      stale = !alive || Date.now() - ts > GRAPH_LOCK_TTL_MS;
+    } else {
+      // Corrupt/empty content (e.g. a holder crashed between openSync("wx")
+      // and writeSync of its "<pid>:<ts>" body) — fall back to the lock
+      // FILE's own mtime for the TTL decision, so this still ages out
+      // instead of wedging the graph forever.
+      try {
+        stale = Date.now() - fs.statSync(lockPath).mtimeMs > GRAPH_LOCK_TTL_MS;
+      } catch (err) {
+        if (err.code === "ENOENT") continue; // vanished — retry from 1
+        throw err;
+      }
+    }
+    if (!stale) return false; // a live lock, not ours
+
+    // 3. STALE — reclaim via a SINGLE-CONSUMER move of the SHARED lock
+    // itself. The rename SOURCE here is lockPath (the one shared resource
+    // every racer contends over), never a per-process temp file — a rename
+    // of a per-process temp OVER lockPath would succeed for every racer,
+    // reintroducing the banned overwrite-then-reread pattern (pre-mortem
+    // scenario 1). Exactly one racer's renameSync succeeds for this stale
+    // generation; the rest see ENOENT and retry the loop.
+    //
+    // NOTE this rename is content-blind: the gap between reading `content`
+    // above (step 2) and this call is a TOCTOU window. A slow racer here can
+    // sweep away a DIFFERENT, freshly wx-created LIVE lock rather than the
+    // stale generation it judged — empirically this can happen with as few
+    // as TWO total racers (the reclaimer's own next-attempt wx-create can
+    // race a second racer's delayed rename of the same path), and more so
+    // with 3+. An earlier revision added a content-reverify + fs.linkSync
+    // restore to catch this — but the restore itself raced a further
+    // reclaim under 3+ racers and could drop the live lock entirely,
+    // orphaning the real holder (a lost-update, worse than the case it was
+    // trying to prevent). That branch is intentionally REMOVED: this lock is
+    // now honest best-effort mutual exclusion, not a provably-exact-one-
+    // winner primitive (see acquireGraphLock's own doc comment and
+    // DESIGN.md's graph/concurrency section for the actual guarantee —
+    // atomic full-file db write, not lock exclusivity). Do not reintroduce a
+    // re-verify-and-restore branch here.
+    const asidePath = `${lockPath}.dead.${process.pid}.${Math.random().toString(36).slice(2)}`;
+    try {
+      fs.renameSync(lockPath, asidePath);
+    } catch (err) {
+      if (err.code === "ENOENT") continue; // another racer already reclaimed it — retry from 1
+      throw err;
+    }
+
+    // Reclaimed (whatever generation was actually at lockPath at rename
+    // time). Best-effort cleanup of the aside file, then loop back to step 1
+    // — the exclusive create there is the FINAL winner-arbiter: lockPath is
+    // now absent, so THIS process's wx-create succeeds; any other racer
+    // looping back sees the freshly wx-created lock and gets EEXIST =>
+    // skipped-locked, never a false "I won" belief.
+    try {
+      fs.unlinkSync(asidePath);
+    } catch {
+      /* best-effort — a subsequent cleanup or crash-restart may remove it later */
+    }
+  }
+  return false; // retry cap reached — fail open rather than livelock
+}
+
+/**
+ * Always called from a `finally`, strictly AFTER the durable db.export() ->
+ * tmp -> renameSync commit (never before). Ownership-checked (best-effort):
+ * only unlinks lockPath if it still holds THIS process's own
+ * "<pid>:<ts>" token, so a process can never unlink a lock some OTHER
+ * process (re)acquired in the meantime — e.g. after this process's own
+ * stale-reclaim-then-crash, or in a 3+-racer reclaim cascade (see
+ * acquireGraphLock). Any error reading/parsing/unlinking is swallowed:
+ * a lock this process never actually held, or one that already vanished,
+ * is not this function's problem to report.
+ */
+function releaseGraphLock(lockPath) {
+  try {
+    const content = fs.readFileSync(lockPath, "utf8");
+    const match = /^(\d+):(\d+)$/.exec(content.trim());
+    if (!match || parseInt(match[1], 10) !== process.pid) return; // not ours — do not touch
+    fs.unlinkSync(lockPath);
+  } catch {
+    /* already gone, never held, or unreadable — nothing to do */
+  }
+}
+
+/**
+ * A `-wal`/`-shm` sidecar next to dbPath is a signal that this DB predates
+ * the sql.js migration (node:sqlite ran in WAL mode; sql.js never produces
+ * these) and may hold uncommitted changes from a crash. Delete on sight
+ * (best-effort, ENOENT-safe) and report whether any were found so the
+ * caller can force a full rebuild this invocation — see plan pre-mortem
+ * scenario 3 / DESIGN.md Known Limitations.
+ */
+function cleanupGraphWalSidecars(dbPath) {
+  let found = false;
+  for (const suffix of ["-wal", "-shm"]) {
+    try {
+      fs.unlinkSync(`${dbPath}${suffix}`);
+      found = true;
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+  }
+  return found;
+}
+
+/** Vendored sql.js loader — always by relative path (never a bare specifier), mirroring loadGraphParser(). */
+async function loadGraphSqlJs() {
+  const vendorDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "vendor", "sql.js");
+  const { default: initSqlJs } = await import(path.join(vendorDir, "sql-wasm.js"));
+  return initSqlJs({ locateFile: (file) => path.join(vendorDir, file) });
+}
+
+/**
+ * Wraps one sql.js prepared statement with a node:sqlite-Statement-like
+ * surface (`.run(...args)/.get(...args)/.all(...args)`, positional bind
+ * params) plus an explicit `.free()` — sql.js has no GC finalizer for
+ * statements, so every caller MUST free what it prepares. Supports the
+ * existing "prepare once -> execute many times -> free once" pattern
+ * (cmdGraphBuild's per-transaction delete/insert/upsert statements) as well
+ * as one-shot inline use via the sqljsAll/sqljsGet helpers below.
+ */
+function sqljsPrepare(db, sql) {
+  const stmt = db.prepare(sql);
+  return {
+    run(...args) {
+      stmt.run(args);
+    },
+    get(...args) {
+      if (args.length) stmt.bind(args);
+      const hasRow = stmt.step();
+      const row = hasRow ? stmt.getAsObject() : undefined;
+      stmt.reset();
+      return row;
+    },
+    all(...args) {
+      if (args.length) stmt.bind(args);
+      const rows = [];
+      while (stmt.step()) rows.push(stmt.getAsObject());
+      stmt.reset();
+      return rows;
+    },
+    free() {
+      stmt.free();
+    },
+  };
+}
+
+/** One-shot `SELECT` returning every row: prepare, bind, collect, free. */
+function sqljsAll(db, sql, ...args) {
+  const wrapped = sqljsPrepare(db, sql);
+  try {
+    return wrapped.all(...args);
+  } finally {
+    wrapped.free();
+  }
+}
+
+/** One-shot `SELECT` returning at most one row: prepare, bind, step, free. */
+function sqljsGet(db, sql, ...args) {
+  const wrapped = sqljsPrepare(db, sql);
+  try {
+    return wrapped.get(...args);
+  } finally {
+    wrapped.free();
+  }
+}
+
+/** Vendored web-tree-sitter loader — always by relative path (never a bare specifier). Unchanged by this migration (only the DB storage engine changed). */
 async function loadGraphParser() {
   const vendorDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "vendor", "tree-sitter");
   const { default: ParserClass } = await import(path.join(vendorDir, "tree-sitter.js"));
@@ -2848,21 +3124,23 @@ function resolveGraphSpecifier(fromRelPath, spec, knownFiles) {
 /**
  * `graph build [--changed-only]` — parses tracked JS/TS/TSX with the
  * vendored Tree-sitter runtime and upserts nodes/edges into the
- * repository-scoped .cat/graph/graph.db (SQLite, WAL, busy_timeout 5000ms)
- * in a single BEGIN IMMEDIATE ... COMMIT transaction. Fail-open on lock
- * contention past busy_timeout: {ok:false, skipped:"locked"}, exit 0.
+ * repository-scoped .cat/graph/graph.db (sql.js/WASM SQLite) inside a
+ * single BEGIN TRANSACTION ... COMMIT. Concurrency is no longer SQLite's own
+ * (sql.js has none across processes) — the entire read-modify-write is
+ * guarded by the create-arbitrated single-consumer lock file
+ * (acquireGraphLock/releaseGraphLock). Fail-open on lock contention:
+ * {ok:false, skipped:"locked"}, exit 0.
  */
 async function cmdGraphBuild(ctx, flags) {
-  requireGraphNodeFloor("graph build");
-  const { DatabaseSync } = await import("node:sqlite");
-  const changedOnly = flags["changed-only"] !== undefined && flags["changed-only"] !== "false";
+  const requestedChangedOnly = flags["changed-only"] !== undefined && flags["changed-only"] !== "false";
 
   const dbPath = graphDbPath(ctx);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const lockPath = graphLockPath(ctx);
 
-  let db;
+  let lockHeld;
   try {
-    db = new DatabaseSync(dbPath, { timeout: GRAPH_BUSY_TIMEOUT_MS });
+    lockHeld = acquireGraphLock(lockPath);
   } catch (err) {
     if (isGraphLockError(err)) {
       printJson({ ok: false, skipped: "locked" });
@@ -2870,258 +3148,301 @@ async function cmdGraphBuild(ctx, flags) {
     }
     throw err;
   }
+  if (!lockHeld) {
+    printJson({ ok: false, skipped: "locked" });
+    return;
+  }
 
   try {
-    db.exec("PRAGMA journal_mode = WAL;");
-    db.exec(`PRAGMA busy_timeout = ${GRAPH_BUSY_TIMEOUT_MS};`);
-    db.exec(GRAPH_SCHEMA_SQL);
+    // A `-wal`/`-shm` sidecar means this DB predates the sql.js migration
+    // and may hold uncommitted changes from a crash (plan pre-mortem
+    // scenario 3) — delete on sight and force a full rebuild THIS
+    // invocation only, regardless of --changed-only.
+    const sidecarsFound = cleanupGraphWalSidecars(dbPath);
+    const changedOnly = sidecarsFound ? false : requestedChangedOnly;
 
-    const sourceFiles = listGraphSourceFiles(ctx.projectRoot);
-    const sourceFileSet = new Set(sourceFiles);
-
-    const existingFiles = new Map();
-    for (const row of db.prepare("SELECT path, sha256 FROM files").all()) {
-      existingFiles.set(row.path, row.sha256);
-    }
-
-    // Decide which files need (re)parsing. Without --changed-only every
-    // scanned file is reparsed (simple, always-consistent full rebuild);
-    // with --changed-only, a file already in the DB with a matching sha256
-    // is skipped and its existing nodes/edges are left untouched.
-    const toParse = [];
-    const unchangedKept = [];
-    for (const relPath of sourceFiles) {
-      const prevSha = existingFiles.get(relPath);
-      if (changedOnly && prevSha !== undefined) {
-        const abs = path.join(ctx.projectRoot, relPath);
-        let sha;
-        try {
-          sha = sha256hex(fs.readFileSync(abs));
-        } catch {
-          toParse.push(relPath);
-          continue;
-        }
-        if (sha === prevSha) {
-          unchangedKept.push(relPath);
-          continue;
-        }
-      }
-      toParse.push(relPath);
-    }
-
-    let ParserClass = null;
-    let languages = null;
-    if (toParse.length) {
-      const loaded = await loadGraphParser();
-      ParserClass = loaded.ParserClass;
-      languages = loaded.languages;
-    }
-
-    const parsedByFile = new Map();
-    for (const relPath of toParse) {
-      const abs = path.join(ctx.projectRoot, relPath);
-      let source;
+    let existingBytes;
+    if (fs.existsSync(dbPath)) {
       try {
-        source = fs.readFileSync(abs, "utf8");
+        existingBytes = fs.readFileSync(dbPath);
       } catch {
-        parsedByFile.set(relPath, { decls: [], imports: [], callCandidates: [], sha: existingFiles.get(relPath) ?? "", parseStatus: "skipped" });
-        continue;
+        existingBytes = undefined;
       }
-      const sha = sha256hex(source);
-      const ext = path.posix.extname(relPath);
-      const wasmName = GRAPH_GRAMMAR_BY_EXT[ext];
-      let facts = { decls: [], imports: [], callCandidates: [] };
-      let parseStatus = "skipped";
-      if (wasmName && languages) {
-        try {
-          const parser = new ParserClass();
-          parser.setLanguage(languages.get(wasmName));
-          const tree = parser.parse(source);
-          facts = extractGraphFacts(relPath, tree.rootNode);
-          parseStatus = tree.rootNode.hasError ? "partial" : "ok";
-        } catch {
-          parseStatus = "skipped";
-        }
-      }
-      parsedByFile.set(relPath, { ...facts, sha, parseStatus });
     }
 
-    // Cross-file resolution needs every file's CURRENT decls, including
-    // unchanged files that were skipped above (loaded from the DB).
-    const declsByFile = new Map();
-    for (const relPath of unchangedKept) {
-      const rows = db.prepare("SELECT id, symbol, kind, exported, line FROM nodes WHERE file = ?").all(relPath);
-      declsByFile.set(
-        relPath,
-        rows.map((r) => ({ id: r.id, symbol: r.symbol, kind: r.kind, exported: !!r.exported, line: r.line }))
-      );
-    }
-    for (const [relPath, info] of parsedByFile) declsByFile.set(relPath, info.decls);
-
-    const perFileDeclMap = new Map();
-    const perFileExportedMap = new Map();
-    const globalExportedIndex = new Map();
-    for (const [relPath, decls] of declsByFile) {
-      const byName = new Map();
-      const exportedByName = new Map();
-      for (const d of decls) {
-        byName.set(d.symbol, d.id);
-        if (d.exported) {
-          exportedByName.set(d.symbol, d.id);
-          if (!globalExportedIndex.has(d.symbol)) globalExportedIndex.set(d.symbol, new Set());
-          globalExportedIndex.get(d.symbol).add(d.id);
-        }
-      }
-      perFileDeclMap.set(relPath, byName);
-      perFileExportedMap.set(relPath, exportedByName);
-    }
-
-    // Resolve imports+calls for changed/new files only — these are the
-    // edges *originating* in that file (edges.file = relPath). Unchanged
-    // files' previously-computed outgoing edges are left as-is.
-    const edgesByFile = new Map();
-    for (const [relPath, info] of parsedByFile) {
-      const edges = [];
-      const localImportMap = new Map();
-      for (const imp of info.imports) {
-        const targetFile = resolveGraphSpecifier(relPath, imp.source, sourceFileSet);
-        if (!targetFile) continue;
-        const targetId = perFileExportedMap.get(targetFile)?.get(imp.remoteName);
-        if (!targetId) continue;
-        localImportMap.set(imp.localName, targetId);
-        edges.push({ from_id: relPath, to_id: targetId, kind: "import", file: relPath, line: imp.line });
-      }
-      const sameFileMap = perFileDeclMap.get(relPath);
-      for (const call of info.callCandidates) {
-        let targetId = sameFileMap?.get(call.calleeName) ?? localImportMap.get(call.calleeName);
-        if (!targetId) {
-          const globalMatches = globalExportedIndex.get(call.calleeName);
-          if (globalMatches && globalMatches.size === 1) targetId = [...globalMatches][0];
-        }
-        if (!targetId) continue;
-        edges.push({ from_id: call.enclosingId, to_id: targetId, kind: "call", file: relPath, line: call.line });
-      }
-      edgesByFile.set(relPath, edges);
-    }
-
-    db.exec("BEGIN IMMEDIATE");
-
+    const SQL = await loadGraphSqlJs();
+    let db;
     try {
-      const deleteNodesStmt = db.prepare("DELETE FROM nodes WHERE file = ?");
-      const deleteEdgesStmt = db.prepare("DELETE FROM edges WHERE file = ?");
-      const deleteFileStmt = db.prepare("DELETE FROM files WHERE path = ?");
-      const insertNodeStmt = db.prepare(
-        "INSERT OR REPLACE INTO nodes (id, file, symbol, kind, exported, line, sha256) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      );
-      const insertEdgeStmt = db.prepare("INSERT INTO edges (from_id, to_id, kind, file, line) VALUES (?, ?, ?, ?, ?)");
-      const upsertFileStmt = db.prepare(
-        "INSERT INTO files (path, sha256, mtime, parse_status, node_count, edge_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
-          "ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, mtime=excluded.mtime, parse_status=excluded.parse_status, " +
-          "node_count=excluded.node_count, edge_count=excluded.edge_count, updated_at=excluded.updated_at"
-      );
-      const upsertMetaStmt = db.prepare(
-        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
-      );
+      db = existingBytes ? new SQL.Database(existingBytes) : new SQL.Database();
+    } catch {
+      // Corrupt on-disk bytes — should never happen (every write is atomic
+      // tmp+rename) but fail open: start fresh, which naturally forces a
+      // full rebuild since the new DB has no `files` rows to diff against.
+      db = new SQL.Database();
+    }
 
-      let nodesWritten = 0;
-      let edgesWritten = 0;
-      let filesPartial = 0;
-      let filesSkipped = 0;
+    const statementWrappers = [];
+    try {
+      db.exec(GRAPH_SCHEMA_SQL);
 
-      for (const [relPath, info] of parsedByFile) {
-        deleteNodesStmt.run(relPath);
-        deleteEdgesStmt.run(relPath);
-        // files row must exist before nodes are inserted (nodes.file REFERENCES files.path)
-        const edges = edgesByFile.get(relPath) ?? [];
-        const nowTs = nowIso();
-        upsertFileStmt.run(relPath, info.sha, nowTs, info.parseStatus, info.decls.length, edges.length, nowTs);
-        for (const d of info.decls) {
-          insertNodeStmt.run(d.id, relPath, d.symbol, d.kind, d.exported ? 1 : 0, d.line, sha256hex(`${d.symbol}:${d.kind}:${d.line}`));
-        }
-        for (const e of edges) insertEdgeStmt.run(e.from_id, e.to_id, e.kind, e.file, e.line);
-        nodesWritten += info.decls.length;
-        edgesWritten += edges.length;
-        if (info.parseStatus === "partial") filesPartial += 1;
-        if (info.parseStatus === "skipped") filesSkipped += 1;
+      const sourceFiles = listGraphSourceFiles(ctx.projectRoot);
+      const sourceFileSet = new Set(sourceFiles);
+
+      const existingFiles = new Map();
+      for (const row of sqljsAll(db, "SELECT path, sha256 FROM files")) {
+        existingFiles.set(row.path, row.sha256);
       }
 
-      let filesPruned = 0;
-      for (const relPath of existingFiles.keys()) {
-        if (!sourceFileSet.has(relPath)) {
+      // Decide which files need (re)parsing. Without --changed-only every
+      // scanned file is reparsed (simple, always-consistent full rebuild);
+      // with --changed-only, a file already in the DB with a matching sha256
+      // is skipped and its existing nodes/edges are left untouched.
+      const toParse = [];
+      const unchangedKept = [];
+      for (const relPath of sourceFiles) {
+        const prevSha = existingFiles.get(relPath);
+        if (changedOnly && prevSha !== undefined) {
+          const abs = path.join(ctx.projectRoot, relPath);
+          let sha;
+          try {
+            sha = sha256hex(fs.readFileSync(abs));
+          } catch {
+            toParse.push(relPath);
+            continue;
+          }
+          if (sha === prevSha) {
+            unchangedKept.push(relPath);
+            continue;
+          }
+        }
+        toParse.push(relPath);
+      }
+
+      let ParserClass = null;
+      let languages = null;
+      if (toParse.length) {
+        const loaded = await loadGraphParser();
+        ParserClass = loaded.ParserClass;
+        languages = loaded.languages;
+      }
+
+      const parsedByFile = new Map();
+      for (const relPath of toParse) {
+        const abs = path.join(ctx.projectRoot, relPath);
+        let source;
+        try {
+          source = fs.readFileSync(abs, "utf8");
+        } catch {
+          parsedByFile.set(relPath, { decls: [], imports: [], callCandidates: [], sha: existingFiles.get(relPath) ?? "", parseStatus: "skipped" });
+          continue;
+        }
+        const sha = sha256hex(source);
+        const ext = path.posix.extname(relPath);
+        const wasmName = GRAPH_GRAMMAR_BY_EXT[ext];
+        let facts = { decls: [], imports: [], callCandidates: [] };
+        let parseStatus = "skipped";
+        if (wasmName && languages) {
+          try {
+            const parser = new ParserClass();
+            parser.setLanguage(languages.get(wasmName));
+            const tree = parser.parse(source);
+            facts = extractGraphFacts(relPath, tree.rootNode);
+            parseStatus = tree.rootNode.hasError ? "partial" : "ok";
+          } catch {
+            parseStatus = "skipped";
+          }
+        }
+        parsedByFile.set(relPath, { ...facts, sha, parseStatus });
+      }
+
+      // Cross-file resolution needs every file's CURRENT decls, including
+      // unchanged files that were skipped above (loaded from the DB).
+      const declsByFile = new Map();
+      for (const relPath of unchangedKept) {
+        const rows = sqljsAll(db, "SELECT id, symbol, kind, exported, line FROM nodes WHERE file = ?", relPath);
+        declsByFile.set(
+          relPath,
+          rows.map((r) => ({ id: r.id, symbol: r.symbol, kind: r.kind, exported: !!r.exported, line: r.line }))
+        );
+      }
+      for (const [relPath, info] of parsedByFile) declsByFile.set(relPath, info.decls);
+
+      const perFileDeclMap = new Map();
+      const perFileExportedMap = new Map();
+      const globalExportedIndex = new Map();
+      for (const [relPath, decls] of declsByFile) {
+        const byName = new Map();
+        const exportedByName = new Map();
+        for (const d of decls) {
+          byName.set(d.symbol, d.id);
+          if (d.exported) {
+            exportedByName.set(d.symbol, d.id);
+            if (!globalExportedIndex.has(d.symbol)) globalExportedIndex.set(d.symbol, new Set());
+            globalExportedIndex.get(d.symbol).add(d.id);
+          }
+        }
+        perFileDeclMap.set(relPath, byName);
+        perFileExportedMap.set(relPath, exportedByName);
+      }
+
+      // Resolve imports+calls for changed/new files only — these are the
+      // edges *originating* in that file (edges.file = relPath). Unchanged
+      // files' previously-computed outgoing edges are left as-is.
+      const edgesByFile = new Map();
+      for (const [relPath, info] of parsedByFile) {
+        const edges = [];
+        const localImportMap = new Map();
+        for (const imp of info.imports) {
+          const targetFile = resolveGraphSpecifier(relPath, imp.source, sourceFileSet);
+          if (!targetFile) continue;
+          const targetId = perFileExportedMap.get(targetFile)?.get(imp.remoteName);
+          if (!targetId) continue;
+          localImportMap.set(imp.localName, targetId);
+          edges.push({ from_id: relPath, to_id: targetId, kind: "import", file: relPath, line: imp.line });
+        }
+        const sameFileMap = perFileDeclMap.get(relPath);
+        for (const call of info.callCandidates) {
+          let targetId = sameFileMap?.get(call.calleeName) ?? localImportMap.get(call.calleeName);
+          if (!targetId) {
+            const globalMatches = globalExportedIndex.get(call.calleeName);
+            if (globalMatches && globalMatches.size === 1) targetId = [...globalMatches][0];
+          }
+          if (!targetId) continue;
+          edges.push({ from_id: call.enclosingId, to_id: targetId, kind: "call", file: relPath, line: call.line });
+        }
+        edgesByFile.set(relPath, edges);
+      }
+
+      db.exec("BEGIN TRANSACTION");
+
+      let totals;
+      try {
+        const deleteNodesStmt = sqljsPrepare(db, "DELETE FROM nodes WHERE file = ?");
+        const deleteEdgesStmt = sqljsPrepare(db, "DELETE FROM edges WHERE file = ?");
+        const deleteFileStmt = sqljsPrepare(db, "DELETE FROM files WHERE path = ?");
+        const insertNodeStmt = sqljsPrepare(
+          db,
+          "INSERT OR REPLACE INTO nodes (id, file, symbol, kind, exported, line, sha256) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        );
+        const insertEdgeStmt = sqljsPrepare(db, "INSERT INTO edges (from_id, to_id, kind, file, line) VALUES (?, ?, ?, ?, ?)");
+        const upsertFileStmt = sqljsPrepare(
+          db,
+          "INSERT INTO files (path, sha256, mtime, parse_status, node_count, edge_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+            "ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, mtime=excluded.mtime, parse_status=excluded.parse_status, " +
+            "node_count=excluded.node_count, edge_count=excluded.edge_count, updated_at=excluded.updated_at"
+        );
+        const upsertMetaStmt = sqljsPrepare(
+          db,
+          "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+        );
+        statementWrappers.push(deleteNodesStmt, deleteEdgesStmt, deleteFileStmt, insertNodeStmt, insertEdgeStmt, upsertFileStmt, upsertMetaStmt);
+
+        let nodesWritten = 0;
+        let edgesWritten = 0;
+        let filesPartial = 0;
+        let filesSkipped = 0;
+
+        for (const [relPath, info] of parsedByFile) {
           deleteNodesStmt.run(relPath);
           deleteEdgesStmt.run(relPath);
-          deleteFileStmt.run(relPath);
-          filesPruned += 1;
+          // files row must exist before nodes are inserted (nodes.file REFERENCES files.path)
+          const edges = edgesByFile.get(relPath) ?? [];
+          const nowTs = nowIso();
+          upsertFileStmt.run(relPath, info.sha, nowTs, info.parseStatus, info.decls.length, edges.length, nowTs);
+          for (const d of info.decls) {
+            insertNodeStmt.run(d.id, relPath, d.symbol, d.kind, d.exported ? 1 : 0, d.line, sha256hex(`${d.symbol}:${d.kind}:${d.line}`));
+          }
+          for (const e of edges) insertEdgeStmt.run(e.from_id, e.to_id, e.kind, e.file, e.line);
+          nodesWritten += info.decls.length;
+          edgesWritten += edges.length;
+          if (info.parseStatus === "partial") filesPartial += 1;
+          if (info.parseStatus === "skipped") filesSkipped += 1;
+        }
+
+        let filesPruned = 0;
+        for (const relPath of existingFiles.keys()) {
+          if (!sourceFileSet.has(relPath)) {
+            deleteNodesStmt.run(relPath);
+            deleteEdgesStmt.run(relPath);
+            deleteFileStmt.run(relPath);
+            filesPruned += 1;
+          }
+        }
+
+        // `last_build_mode` + `full_build_generation` are the cross-file
+        // honesty signal for `graph query` (--changed-only skips reparsing
+        // dependents, so a renamed/removed export can leave dangling caller
+        // edges the per-file `stale` sha check can never see). A FULL build
+        // (changedOnly=false) always recomputes every file's outgoing edges,
+        // so it retires that staleness and bumps the generation counter; a
+        // --changed-only build leaves the generation untouched and just
+        // records that the most recent build was incremental.
+        const prevGenRow = sqljsGet(db, "SELECT value FROM meta WHERE key = 'full_build_generation'");
+        const prevGen = prevGenRow ? parseInt(prevGenRow.value, 10) || 0 : 0;
+        const buildMode = changedOnly ? "changed-only" : "full";
+        const fullBuildGeneration = changedOnly ? prevGen : prevGen + 1;
+
+        upsertMetaStmt.run("last_build_at", nowIso());
+        upsertMetaStmt.run("last_build_files_scanned", String(sourceFiles.length));
+        upsertMetaStmt.run("last_build_mode", buildMode);
+        upsertMetaStmt.run("full_build_generation", String(fullBuildGeneration));
+
+        db.exec("COMMIT");
+
+        totals = sqljsGet(
+          db,
+          "SELECT (SELECT COUNT(*) FROM nodes) AS nodes, (SELECT COUNT(*) FROM edges) AS edges, (SELECT COUNT(*) FROM files) AS files"
+        );
+
+        printJson({
+          ok: true,
+          changed_only: changedOnly,
+          incremental_since_full_build: buildMode === "changed-only",
+          files_scanned: sourceFiles.length,
+          files_changed: parsedByFile.size,
+          files_unchanged: unchangedKept.length,
+          files_pruned: filesPruned,
+          files_partial: filesPartial,
+          files_skipped: filesSkipped,
+          nodes_written: nodesWritten,
+          edges_written: edgesWritten,
+          total_nodes: totals.nodes,
+          total_edges: totals.edges,
+          total_files: totals.files,
+        });
+      } catch (err) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          /* best-effort — no transaction may have been open yet */
+        }
+        throw err;
+      }
+
+      // Finalize: free every prepared statement this call created, export
+      // the committed bytes, and durably commit them to disk via tmp+rename
+      // BEFORE the lock is released (invariant: release strictly follows the
+      // durable commit — see releaseGraphLock).
+      for (const wrapper of statementWrappers) wrapper.free();
+      statementWrappers.length = 0;
+      const bytes = db.export();
+      atomicWrite(dbPath, Buffer.from(bytes));
+    } finally {
+      for (const wrapper of statementWrappers) {
+        try {
+          wrapper.free();
+        } catch {
+          /* already freed, or db already closed */
         }
       }
-
-      // `last_build_mode` + `full_build_generation` are the cross-file
-      // honesty signal for `graph query` (--changed-only skips reparsing
-      // dependents, so a renamed/removed export can leave dangling caller
-      // edges the per-file `stale` sha check can never see). A FULL build
-      // (changedOnly=false) always recomputes every file's outgoing edges,
-      // so it retires that staleness and bumps the generation counter; a
-      // --changed-only build leaves the generation untouched and just
-      // records that the most recent build was incremental.
-      const prevGenRow = db.prepare("SELECT value FROM meta WHERE key = 'full_build_generation'").get();
-      const prevGen = prevGenRow ? parseInt(prevGenRow.value, 10) || 0 : 0;
-      const buildMode = changedOnly ? "changed-only" : "full";
-      const fullBuildGeneration = changedOnly ? prevGen : prevGen + 1;
-
-      upsertMetaStmt.run("last_build_at", nowIso());
-      upsertMetaStmt.run("last_build_files_scanned", String(sourceFiles.length));
-      upsertMetaStmt.run("last_build_mode", buildMode);
-      upsertMetaStmt.run("full_build_generation", String(fullBuildGeneration));
-
-      db.exec("COMMIT");
-
-      const totals = db
-        .prepare(
-          "SELECT (SELECT COUNT(*) FROM nodes) AS nodes, (SELECT COUNT(*) FROM edges) AS edges, (SELECT COUNT(*) FROM files) AS files"
-        )
-        .get();
-
-      printJson({
-        ok: true,
-        changed_only: changedOnly,
-        incremental_since_full_build: buildMode === "changed-only",
-        files_scanned: sourceFiles.length,
-        files_changed: parsedByFile.size,
-        files_unchanged: unchangedKept.length,
-        files_pruned: filesPruned,
-        files_partial: filesPartial,
-        files_skipped: filesSkipped,
-        nodes_written: nodesWritten,
-        edges_written: edgesWritten,
-        total_nodes: totals.nodes,
-        total_edges: totals.edges,
-        total_files: totals.files,
-      });
-    } catch (err) {
       try {
-        db.exec("ROLLBACK");
+        db.close();
       } catch {
-        /* best-effort — no transaction may have been open yet */
+        /* already closed or never opened */
       }
-      throw err;
     }
-  } catch (err) {
-    // Covers lock contention ANYWHERE in this function — the PRAGMA/DDL
-    // calls above BEGIN IMMEDIATE, and BEGIN IMMEDIATE itself, can also
-    // throw "database is locked" while another process holds the write
-    // lock, not only the transaction body. Fail-open per the plan's
-    // concurrency model: never crash on lock contention, exit 0.
-    if (isGraphLockError(err)) {
-      printJson({ ok: false, skipped: "locked" });
-      return;
-    }
-    throw err;
   } finally {
-    try {
-      db.close();
-    } catch {
-      /* already closed or never opened */
-    }
+    releaseGraphLock(lockPath);
   }
 }
 
@@ -3129,18 +3450,17 @@ async function cmdGraphBuild(ctx, flags) {
  * `graph query --file <path> [--depth N]` (default depth 2) — read-only
  * lookup of a file's own nodes plus transitive callers/dependents (fan-in,
  * BFS over both `call` and `import` edges) up to --depth, from the
- * repository-scoped .cat/graph/graph.db. `stale` reflects whether the
- * queried file's current on-disk sha256 differs from the stored row — it
- * says nothing about OTHER files' edges into this one. `incremental_since_
- * full_build` is the cross-file honesty signal: true when the most recent
- * `graph build` was --changed-only, meaning dependents that were not
- * reparsed may still hold dangling/stale caller edges (e.g. after a
- * cross-file symbol rename) even though `stale` reports false here.
+ * repository-scoped .cat/graph/graph.db. Takes NO lock — sql.js loads the
+ * last atomically-renamed-into-place bytes off disk, so there is never a
+ * torn read to guard against. `stale` reflects whether the queried file's
+ * current on-disk sha256 differs from the stored row — it says nothing
+ * about OTHER files' edges into this one. `incremental_since_full_build` is
+ * the cross-file honesty signal: true when the most recent `graph build`
+ * was --changed-only, meaning dependents that were not reparsed may still
+ * hold dangling/stale caller edges (e.g. after a cross-file symbol rename)
+ * even though `stale` reports false here.
  */
 async function cmdGraphQuery(ctx, flags) {
-  requireGraphNodeFloor("graph query");
-  const { DatabaseSync } = await import("node:sqlite");
-
   if (!flags.file || flags.file === true) throw new UsageError("graph query requires --file <path>");
   const absFile = path.resolve(ctx.projectRoot, flags.file);
   const relFile = path.relative(ctx.projectRoot, absFile).split(path.sep).join("/");
@@ -3169,9 +3489,22 @@ async function cmdGraphQuery(ctx, flags) {
   const dbPath = graphDbPath(ctx);
   if (!fs.existsSync(dbPath)) return missing();
 
+  // Raw-bytes read wrapped in try/catch: an ENOENT (or other read failure)
+  // between the existsSync check above and this readFileSync — e.g. another
+  // process's tmp+rename commit landing in that exact window — must fall
+  // through to the same fail-open `missing()` response, not crash
+  // (architect LOW, fail-open contract preserved).
+  let bytes;
+  try {
+    bytes = fs.readFileSync(dbPath);
+  } catch {
+    return missing();
+  }
+
+  const SQL = await loadGraphSqlJs();
   let db;
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true, timeout: GRAPH_BUSY_TIMEOUT_MS });
+    db = new SQL.Database(bytes);
   } catch {
     return missing();
   }
@@ -3182,10 +3515,10 @@ async function cmdGraphQuery(ctx, flags) {
     // were NOT reparsed may be stale even though this file's own `stale`
     // (sha256) check below says otherwise (see BLOCKER 2 / DESIGN.md graph
     // subsystem "Known Limitations").
-    const buildModeRow = db.prepare("SELECT value FROM meta WHERE key = 'last_build_mode'").get();
+    const buildModeRow = sqljsGet(db, "SELECT value FROM meta WHERE key = 'last_build_mode'");
     const incrementalSinceFullBuild = buildModeRow?.value === "changed-only";
 
-    const fileRow = db.prepare("SELECT * FROM files WHERE path = ?").get(relFile);
+    const fileRow = sqljsGet(db, "SELECT * FROM files WHERE path = ?", relFile);
     if (!fileRow) return missing(incrementalSinceFullBuild);
 
     let stale = true;
@@ -3196,7 +3529,7 @@ async function cmdGraphQuery(ctx, flags) {
       stale = true;
     }
 
-    const nodeRows = db.prepare("SELECT id, symbol, kind, exported, line FROM nodes WHERE file = ? ORDER BY line").all(relFile);
+    const nodeRows = sqljsAll(db, "SELECT id, symbol, kind, exported, line FROM nodes WHERE file = ? ORDER BY line", relFile);
     const nodes = nodeRows.map((r) => ({ id: r.id, symbol: r.symbol, kind: r.kind, exported: !!r.exported, line: r.line }));
 
     const visited = new Map();
@@ -3209,7 +3542,7 @@ async function cmdGraphQuery(ctx, flags) {
     let currentDistance = 0;
     while (currentDistance < depth && frontier.length) {
       const placeholders = frontier.map(() => "?").join(",");
-      const rows = db.prepare(`SELECT DISTINCT from_id FROM edges WHERE to_id IN (${placeholders})`).all(...frontier);
+      const rows = sqljsAll(db, `SELECT DISTINCT from_id FROM edges WHERE to_id IN (${placeholders})`, ...frontier);
       const nextFrontier = [];
       for (const row of rows) {
         if (visited.has(row.from_id)) continue;
@@ -3223,7 +3556,7 @@ async function cmdGraphQuery(ctx, flags) {
     const callers = [];
     for (const [id, distance] of visited) {
       if (distance === 0) continue;
-      const nodeRow = db.prepare("SELECT file, symbol, kind FROM nodes WHERE id = ?").get(id);
+      const nodeRow = sqljsGet(db, "SELECT file, symbol, kind FROM nodes WHERE id = ?", id);
       if (nodeRow) {
         callers.push({ id, file: nodeRow.file, symbol: nodeRow.symbol, kind: nodeRow.kind, distance });
       } else {
@@ -3279,11 +3612,12 @@ subcommands:
                                                   # diagnostic-only (the checkpoint gate always resolves via
                                                   # .cat/settings.json designQa.visualDiffBlockThreshold, PROVISIONAL
                                                   # default 0.75); stdout includes raw_diff_ratio AND diff_ratio.
-  graph build  [--changed-only]                   # Node 22.13.0+ only: parse tracked JS/TS/TSX with the vendored
-                                                  # Tree-sitter runtime, upsert into repo-scoped .cat/graph/graph.db
-                                                  # (SQLite, WAL). --changed-only skips files whose sha256 is unchanged.
-  graph query  --file <path> [--depth N]          # Node 22.13.0+ only: query .cat/graph/graph.db for a file's own
-                                                  # nodes plus transitive callers/dependents up to --depth (default 2)`;
+  graph build  [--changed-only]                   # Node 18+: parse tracked JS/TS/TSX with the vendored Tree-sitter
+                                                  # runtime, upsert into repo-scoped .cat/graph/graph.db (sql.js/WASM
+                                                  # SQLite). A create-arbitrated lock file serializes concurrent
+                                                  # builds; --changed-only skips files whose sha256 is unchanged.
+  graph query  --file <path> [--depth N]          # Node 18+: query .cat/graph/graph.db for a file's own nodes plus
+                                                  # transitive callers/dependents up to --depth (default 2)`;
 
 function parseArgs(argv) {
   const words = [];
