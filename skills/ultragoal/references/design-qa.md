@@ -142,11 +142,12 @@ a finding to measure, not something to wave through.
 - [ ] All in-scope images/media/async content actually LOADED in the capture (verified `img.complete && naturalWidth>0`), not gray placeholders.
 - [ ] I captured the AS-IS implementation render on disk and confirmed the PNG shows the real component with real content.
 - [ ] I exported the mapped TO-BE Figma frame/node on disk (or used the provided design image in fallback mode).
-- [ ] I opened BOTH images and did an explicit side-by-side VISUAL comparison, recording a visual-gap list — not only a numeric diff.
+- [ ] I opened BOTH images and did an explicit side-by-side comparison, AND `cat-state.mjs design visual` was run over the saved TO-BE export and AS-IS screenshot and its result (`qa.design.visual[]`) is present and passes — the mechanical pixel-diff result, not a self-attested checkbox, is what the checkpoint gate actually enforces (see "Mechanical visual enforcement" below).
 - [ ] Every numeric claim in the findings came from `browser_evaluate` on the LIVE DOM — none from reading source code or from the design guide alone.
 - [ ] I enumerated EVERY explicitly-sized design node (no sampling) — including small fixed-size elements (pill/badge/label/chip/thumbnail/counter/avatar) — and each has a row; none was dropped.
 - [ ] Every finding holds BOTH numbers (two-numbers rule): `figma_expected` from the design source AND `impl_actual` from the live DOM, on the same element and the same property — no impressionistic ("looks/seems") claim, no proxy value stood in for the design's own property.
 - [ ] `cat-state.mjs design diff` was run over the `--figma` inventory and `--impl` measurements and exits 0 (no `unmeasured`/`malformed`); its `rows` back the matrix below.
+- [ ] `cat-state.mjs design visual --figma <TO-BE export> --impl <AS-IS screenshot>` was run for EVERY declared surface and its output (`raw_diff_ratio`, `diff_ratio`, `severity`) was folded into `qa.design.visual[]` — see "Mechanical visual enforcement" below.
 
 If any box is unchecked, the design dimension is `not-verified` and a `qa.blockers` entry is emitted —
 never a `passed`.
@@ -229,6 +230,41 @@ Run it until it is green (exit 0), then fold its `rows` straight into the `qa.de
 green state means "every node I extracted was measured with two real numbers" — it does NOT by itself mean
 "no gaps"; gaps are the rows it emits with Major/Critical severity, which you still fix. This does not
 replace the mandatory side-by-side visual pass (numbers still miss shape/alignment/imagery) — run both.
+
+### Mechanical visual enforcement — `cat-state.mjs design visual` (the side-by-side pass, mechanized)
+
+The mandatory side-by-side visual pass above (composition/alignment/proportion/imagery) used to be a
+self-attested checkbox. It no longer is: the checkpoint gate now REQUIRES one `qa.design.visual[]` entry
+per declared surface, computed by the sanctioned CLI from the two saved PNGs — a pure-Node pixel diff, no
+self-report. Run it for every surface after saving both images (Step 3 below):
+
+```
+node "{helper}" design visual --session {sid} --figma <TO-BE export path> --impl <AS-IS screenshot path>
+```
+
+- Both paths MUST be real PNGs (the decoder is PNG-only — JPEG is rejected even though `qa.artifacts`
+  otherwise accepts it), already saved under `.cat/_session-{sid}/ultragoal/artifacts/` and referenced in
+  `qa.artifacts`. The CLI decodes both, letterboxes+downscales them onto a common canvas, and computes a
+  pixel-diff ratio.
+- Output includes `raw_diff_ratio` (before any `exclude_regions`), `diff_ratio` (after), and `severity`
+  (`None` / `Major` / `Blocking`). Fold `surface`, `figma_export`, `impl_screenshot`, `raw_diff_ratio`,
+  `diff_ratio`, `severity`, and `exclude_regions` (default `[]`) straight into `qa.design.visual[]` below —
+  the checkpoint gate recomputes both ratios and the severity from the actual files regardless of what you
+  submit (recompute-authoritative, exactly like the numeric rows), so there is nothing to hand-tune here.
+- **`Blocking` is decided from `raw_diff_ratio` ALONE and is decided PRE any `exclude_regions`** —
+  `exclude_regions` can only ever move a surface between `Major` and `None` (for a surface whose raw ratio
+  is already below the block threshold); it can NEVER pull a `Blocking` surface down to `Major` or `None`,
+  at any configured threshold. A `Blocking` result means a grossly mismatched render (wrong page, broken or
+  near-blank render, totally different layout) — it is NEVER waivable, exactly like a computed numeric
+  Critical: fix the render (or the capture), there is no waiver path. A `Major` result IS waivable, exactly
+  like a numeric Major (`qa.design.waived`, user-acknowledged only).
+- `exclude_regions` (optional, `[{ "x", "y", "w", "h" }]`, each normalized 0..1) lets you exclude a
+  known-noisy region (e.g. a live data widget) from the diff — bounded to at most 15% of the frame in
+  total; an attempt to exclude more is dropped entirely and the diff is recomputed on the full frame.
+- `raw_diff_ratio` tracks gross RAW mismatch only — it is a coarse pixel-magnitude signal (default
+  thresholds are intentionally loose, PROVISIONAL pre-calibration), not a substitute for the side-by-side
+  eyeball pass above or the numeric matrix below; a passing `qa.design.visual[]` does not by itself mean
+  "no visual gap", only "no gross mismatch".
 
 ## Step 1 — Extract the design policy (scoped to THIS goal)
 
@@ -377,6 +413,17 @@ parses and validates — do not rename keys or invent fields:
       "severity": "<one of the severity enum below>"
     }
   ],
+  "visual": [
+    {
+      "surface": "<matches a surfaces[].name — exactly ONE entry per declared surface, mandatory>",
+      "figma_export": "<path to the saved TO-BE PNG, registered in qa.artifacts>",
+      "impl_screenshot": "<path to the saved AS-IS PNG, registered in qa.artifacts>",
+      "raw_diff_ratio": "<from `design visual` — pre-exclude_regions pixel-diff ratio>",
+      "diff_ratio": "<from `design visual` — post-exclude_regions pixel-diff ratio>",
+      "severity": "<None | Major | Blocking — see Mechanical visual enforcement above>",
+      "exclude_regions": []
+    }
+  ],
   "waived": null,
   "not_applicable": null
 }
@@ -387,7 +434,13 @@ parses and validates — do not rename keys or invent fields:
   `padding-right`, `padding-bottom`, `padding-left`, `margin-top`, `margin-right`, `margin-bottom`,
   `margin-left`, `gap`, `border-radius`. The aggregate forms `padding` and `margin` are also
   accepted by the CLI (use per-side keys when the design specifies different values per side).
-- `severity` enum (exact strings): `Critical`, `Major`, `Minor`, `Trivial`, `None`.
+- `severity` enum for `rows[]` (exact strings): `Critical`, `Major`, `Minor`, `Trivial`, `None`.
+- `visual[]` is mandatory whenever `surfaces` is non-empty — see "Mechanical visual enforcement" above for
+  how to produce each entry (`node "{helper}" design visual --figma ... --impl ...`). `severity` for
+  `visual[]` entries uses a SEPARATE, 3-value enum: `None` / `Major` (waivable, same `qa.design.waived` as
+  numeric Major) / `Blocking` (never waivable — decided from `raw_diff_ratio` alone, before
+  `exclude_regions` is applied, so `exclude_regions` can never pull a `Blocking` surface down to `Major` or
+  `None`). `raw_diff_ratio` and `diff_ratio` are identical whenever `exclude_regions` is empty.
 - Per surface (unless that surface is `no_text:true`), MANDATORY rows cover `font-size`, `line-height`,
   `font-weight` for every in-scope text element, plus at least one of padding/margin/gap for spacing.
   This coverage is **per rendered variant surface** (see Surface enumeration above), not per component.
@@ -405,18 +458,22 @@ parses and validates — do not rename keys or invent fields:
   NOT inside `qa.design`) is `true`. Both the reason and the architect ack are required; a
   design-sourced goal that DOES have a screenshot cannot use `not_applicable`.
 
-**The CLI recomputes severity — do not rely on a self-labeled value.** Every submitted `severity` is
+**The CLI recomputes severity — do not rely on a self-labeled value.** Every submitted `rows[].severity` is
 independently recomputed by the sanctioned CLI from `figma_expected`/`impl_actual` against the existing
 severity table above (`design-qa.md` severity classification); a submitted severity more lenient than
 the recomputed one is rejected outright, and the checkpoint is refused if any recomputed severity is
 Critical or Major and no valid hatch (`waived` or `not_applicable`) covers it. Because of this recompute,
 measuring per-text `font-size`/`line-height`/`font-weight` and per-surface spacing is **mandatory, not
 optional** — an incomplete or unmeasured matrix fails the gate exactly like a measured-and-wrong one; you
-cannot skip a row to avoid a bad number.
+cannot skip a row to avoid a bad number. The SAME recompute-authoritative rule applies to `visual[]`: the
+CLI always recomputes `raw_diff_ratio`/`diff_ratio`/`severity` from the actual PNGs, never trusting a
+submitted value, and the checkpoint is refused if any surface computes `Blocking`, or computes `Major`
+with no valid `waived` hatch covering it.
 
 Design-dimension `qa.status` is `passed` only when BOTH: (a) the Capture-integrity gate's pre-verdict
 self-check is fully satisfied (a real live render was captured, both AS-IS/TO-BE images exist and were
-eyeballed, and every number came from the live DOM), AND (b) no unresolved Critical/Major gap remains.
+eyeballed, and every number came from the live DOM), AND (b) no unresolved Critical/Major gap remains AND
+no `visual[]` surface computes `Blocking` (never waivable) or an unwaived `Major`.
 A capture that failed or was skipped is `not-verified` with a `qa.blockers` entry — never `passed`. The leader
 folds this into the goal's overall quality-gate JSON (`{architect_review, qa:{status, commands,
 evidence, artifacts, blockers}}`) and runs `goal checkpoint --status complete --quality-gate-json`; the
@@ -432,7 +489,9 @@ findings. Never downgrade a real gap to advisory to pass the gate; a few pixels 
 
 **[R18] A Critical is NEVER waivable — fix it, full stop.** There is no path that clears a computed
 Critical other than making the implementation match the design; `qa.design.waived` cannot cover a
-Critical row and the CLI rejects it regardless of `user_acknowledged`.
+Critical row and the CLI rejects it regardless of `user_acknowledged`. The same applies to a `visual[]`
+surface that computes `Blocking`: it is decided from `raw_diff_ratio` alone (before `exclude_regions`) and
+is never waivable — re-capture/fix the render, or re-verify the capture matches the intended surface.
 
 **[R18] A remaining Major may be waived, but only by the USER, never by the agent.** The default is
 still "resolve everything." If, after a genuine attempt to fix it, a Major gap cannot be resolved within

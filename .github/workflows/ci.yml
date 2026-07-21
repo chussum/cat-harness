@@ -1,0 +1,31 @@
+name: CI
+
+# Scope note: this workflow covers the plugin runtime (hooks + scripts/cat-state.mjs).
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: node --test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22.13.x", "24.x"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Run cat-state.mjs test suite
+        run: node --test scripts/cat-state.test.mjs
+
+      - name: Run cat-hook.mjs test suite
+        run: node --test hooks/cat-hook.test.mjs

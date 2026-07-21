@@ -11,7 +11,7 @@ implementation requests auto-route through `deep-interview → ralplan → ultra
 fail-closed behind machine-checked receipts.
 
 The surface is deliberately small and fixed, in gajae-code's spirit ("no
-sprawling default skill zoo"): 4 skills, 4 agents, 3 hook events, 1 sanctioned
+sprawling default skill zoo"): 4 skills, 4 agents, 4 hook events, 1 sanctioned
 state writer, 4 thin escape-hatch commands. It does not expand casually.
 
 ---
@@ -39,13 +39,15 @@ cat-harness는 [gajae-code](https://github.com/Yeachan-Heo/gajae-code)의 작업
   레인**이 추가로 돕니다: Figma 정책 추출 → 구현 매핑 → Playwright 캡처 →
   computed-style 대조 → 심각도 분류. Critical/Major 갭은 완료를 차단합니다.
   (Playwright MCP 필요, Figma MCP 권장 / Jira·엑셀 리포트·TC 생성은 범위 밖)
-- 요구 사항: PATH에 Node.js 18 이상. 설치는 아래 [Install](#install) 참조.
+- 요구 사항: PATH에 Node.js 22.13.0 이상 (코드-그래프 `graph build`/`graph query`
+  서브커맨드에만 필요; 나머지 기능은 Node.js 18 이상에서 그대로 동작). 설치는 아래
+  [Install](#install) 참조.
 
 ---
 
 ## How auto-triggering works
 
-Three hook events, one entry point (`hooks/cat-hook.mjs`, plain Node, no
+Four hook events, one entry point (`hooks/cat-hook.mjs`, plain Node, no
 network, no LLM calls, fail-open on internal error):
 
 ### 1. `UserPromptSubmit` — the router
@@ -126,6 +128,13 @@ Aborting a run is a single sanctioned deactivation write (`active: false`,
 phase `cancelled` or `failed`) via the state CLI; successful terminal writes
 also set `active: false`, so finished runs stop being advertised as active.
 
+### 4. `SubagentStop` — dialogue reply capture
+
+Passive, disk-only: pairs a subagent's reply with its earlier dispatch
+(matched on `agent_type`, FIFO) and appends the excerpt pair to
+`state/dialogue-excerpts.jsonl`. Never emits a permission decision and never
+blocks the turn — fail-open on any capture error.
+
 ## The four workflows
 
 ### deep-interview — clarity gate
@@ -165,12 +174,16 @@ auto-executes.
 
 ### ralplan — feasibility gate
 
-Consensus planning loop (≤5 iterations): a `planner` agent drafts the plan +
-deliberation summary; a fresh `architect` (CLEAR/WATCH/BLOCK +
-APPROVE/COMMENT/REQUEST CHANGES) and a fresh `critic` (OKAY/ITERATE/REJECT)
-review the same persisted artifact in parallel. The join gate requires Critic
-`OKAY` **and** Architect `CLEAR`+`APPROVE` on the same artifact
-(path + sha256). Then every loop-made assumption is confirmed with you one at a
+Consensus planning loop (iteration cap set by risk tier — high-risk `full` ≤5,
+unchanged; low-risk `lite` ≤2, escalating to 5 the moment a low-risk pass
+surfaces a high-risk trigger): a `planner` agent drafts the plan + deliberation
+summary; a fresh `architect` (CLEAR/WATCH/BLOCK +
+APPROVE/COMMENT/REQUEST CHANGES) and a fresh `critic` (OKAY/ITERATE/REJECT),
+spawned with the tier's reviewer model (`opus` for high-risk, `sonnet` for
+low-risk), review the same persisted artifact in parallel. The join gate
+requires Critic `OKAY` **and** Architect `CLEAR`+`APPROVE` on the same artifact
+(path + sha256) — identical for both tiers; only the model and cap vary. Then
+every loop-made assumption is confirmed with you one at a
 time, an ADR-style final plan lands as `pending-approval.md`, and execution
 requires answering a structured approval question — "sounds good" is not
 approval.
@@ -218,9 +231,13 @@ pending → `awaiting_integration`; anything failed/blocked or missing evidence 
 | agent | tools | model | role |
 |---|---|---|---|
 | `planner` | Read, Grep, Glob, WebSearch, WebFetch, Bash (read-only discipline) | sonnet | drafts plans + deliberation records; receipt-only returns |
-| `architect` | Read, Grep, Glob | opus | architecture + code review; CLEAR/WATCH/BLOCK + APPROVE/COMMENT/REQUEST CHANGES; evidence-cited findings |
-| `critic` | Read, Grep, Glob | opus | plan-only actionability gatekeeper; OKAY/ITERATE/REJECT; checks testability, sequencing, rollback |
+| `architect` | Read, Grep, Glob | opus¹ | architecture + code review; CLEAR/WATCH/BLOCK + APPROVE/COMMENT/REQUEST CHANGES; evidence-cited findings |
+| `critic` | Read, Grep, Glob | opus¹ | plan-only actionability gatekeeper; OKAY/ITERATE/REJECT; checks testability, sequencing, rollback |
 | `executor` | all | sonnet | the only write-capable role; follows plan stages; returns receipts + evidence |
+
+¹ frontmatter default/fallback. In ralplan's low-risk consensus passes (`reviewer_tier: "lite"`), the
+Agent tool spawns architect/critic with an explicit `model: sonnet` override instead — see "ralplan —
+feasibility gate" below.
 
 Read-only agents end with a machine-parseable `VERDICT: <verdict>` line and
 persist bodies as artifact files, never inline dumps. Authoring and reviewing
@@ -235,6 +252,8 @@ Everything lives under `<project>/.cat/`, per session:
 ```
 .cat/
 ├── settings.json                                # user config (see Configuration)
+├── graph/graph.db                               # REPO-scoped code graph (SQLite WAL, + -wal/-shm) — the
+│                                                 #   one artifact here that is NOT per-session
 └── _session-{session_id}/
     ├── .session-activity.json                   # touched on every mutation
     ├── state/{skill}-state.json                 # per-skill phase/ambiguity envelope
@@ -249,14 +268,38 @@ Everything lives under `<project>/.cat/`, per session:
 State files, `goals.json`, `ledger.jsonl`, and `index.jsonl` are runtime-owned:
 only `scripts/cat-state.mjs` may mutate them (atomic writes, sha256 receipts,
 revision bumps, phase-transition validation, ambiguity floor clamping). Spec and
-plan markdown bodies are written with normal tools. `.cat/` is safe to delete
-between projects; it is the audit trail while work is in flight.
+plan markdown bodies are written with normal tools. `.cat/graph/graph.db` is
+likewise runtime-owned and repo-scoped rather than per-session — only
+`cat-state.mjs graph build` may mutate it. `.cat/` is safe to delete between
+projects; it is the audit trail while work is in flight (deleting
+`graph/graph.db` just means the next `graph build` rebuilds it from scratch).
+
+### Known limitations — `graph build --changed-only`
+
+`--changed-only` is a fast incremental mode: it skips reparsing any file
+whose sha256 is unchanged, so it never recomputes inbound cross-file edges
+for dependents that were not reparsed. After a cross-file symbol rename or
+removal, a dependent file's stale caller edges can persist even though the
+renamed/removed file's own `stale` field reports `false`. Run a full
+`graph build` (no `--changed-only`) after such a rename for correct
+caller/dependent results. `graph query` sets `incremental_since_full_build:
+true` whenever the most recent build was `--changed-only`, to flag that
+cross-file caller/dependent data may be stale even when `stale` is `false`.
 
 ## Requirements
 
-- **Node.js >= 18 on PATH.** Hooks and the state CLI run as
-  `node "${CLAUDE_PLUGIN_ROOT}/..."`. Zero npm dependencies — nothing to
-  install beyond Node itself.
+- **Node.js 22.13.0 or newer on PATH for the full feature set.** Hooks and
+  the state CLI run as `node "${CLAUDE_PLUGIN_ROOT}/..."`. Only the
+  code-graph subcommands (`graph build`, `graph query`) require this floor —
+  they dynamically import Node's builtin `node:sqlite` (unflagged at
+  22.13.0+; still "Experimental" upstream — a WATCH) only inside their own
+  handlers. Every other hook and subcommand keeps running on Node 18+.
+- **One vendored dependency, not an npm install.** `graph build`/`graph
+  query` parse JS/TS/TSX with `web-tree-sitter@0.24.7` plus its grammar
+  `.wasm` files, vendored and git-committed under
+  `scripts/vendor/tree-sitter/` (~5.5 MiB, loaded only by relative path —
+  see `scripts/vendor/tree-sitter/VENDOR.md`). There is still nothing for
+  end users to `npm install`: clone or install the plugin and go.
 - Claude Code with plugin support.
 
 ## Install
@@ -290,6 +333,9 @@ Auto-routing means you rarely need these; they exist as thin escape hatches:
 {
   "deepInterview": {
     "ambiguityThreshold": 0.05
+  },
+  "designQa": {
+    "visualDiffBlockThreshold": 0.75
   }
 }
 ```
@@ -301,9 +347,18 @@ strict on purpose: 0.05 means "interview until nearly nothing is ambiguous".
 Raise it (e.g. 0.35–0.5) if you want shorter interviews, or ask for a
 `quick interview`.
 
+`designQa.visualDiffBlockThreshold` (optional; default `0.75`, PROVISIONAL pre-calibration) overrides the
+design-QA visual gate's `Blocking` cutoff — the mechanical PNG pixel-diff ratio at or above which
+`cat-state.mjs design visual`/the completion gate refuses a surface unconditionally (never waivable, like
+a numeric Critical). Valid range: strictly greater than `0.45`, strictly less than `1`; an out-of-range or
+malformed value falls back to the default and is audited. Lower it if your project's UI is legitimately
+low-noise and you want a stricter gate; raise it if a normal, correct surface is a false-block risk at the
+default. `exclude_regions` (bounded to 15% of the frame) can only ever affect this threshold's `Major`/`None`
+boundary, never `Blocking` — a low threshold cannot be bypassed by excluding regions.
+
 ## What this plugin deliberately does NOT do
 
-- **No tmux, no external processes.** gajae-code's team workflow drives tmux
+- **No tmux, no external processes.**¹ gajae-code's team workflow drives tmux
   workers; this port uses Claude Code's native subagents only. If you need
   persistent OS-level workers, this plugin is not that.
 - **No auto-execution of pending-approval plans.** Specs and plans stay
@@ -318,9 +373,17 @@ Raise it (e.g. 0.35–0.5) if you want shorter interviews, or ask for a
   they inject context, guard tools, and gate stops. Judgment calls (is this
   vague? is this risky?) stay with the model following injected rules and
   in-skill gates.
-- **No surface growth.** 4 skills, 4 agents, 3 hook events, 1 state writer,
-  4 commands — fixed. The plugin improves by making this small method better,
+- **No surface growth.** 4 skills, 4 agents, 4 hook events, 1 state writer,
+  4 commands — fixed. `graph build`/`graph query` are subcommands of that one
+  existing state writer, not new surface — subcommand count is not part of
+  the fixed count. The plugin improves by making this small method better,
   not by adding a fifth workflow.
+
+¹ This bans self-managed persistent OS-level processes (e.g. tmux panes kept
+alive across turns) — it does not cover reading an already-present external
+`.codegraph/` index, or `graph build`/`graph query` calling the vendored
+web-tree-sitter WASM runtime in-process. Neither spawns or supervises an
+external process; both run inside the same Node invocation as the CLI call.
 
 ## License
 

@@ -1,5 +1,140 @@
 # Changelog
 
+## 1.2.0 — Remove the dashboard subsystem (2026-07-21)
+
+Removes `dashboard/` (the status server + monitoring UI, ~133MB / 95 tracked files) and every piece of
+its runtime wiring. It was documented as OUT-OF-SURFACE infrastructure (DESIGN.md §1) layered on top of
+the 4-skill/4-agent contract, never gating a workflow — but the hook still had two real side effects on
+its behalf on every `UserPromptSubmit`: a detached-launcher auto-start (G003) and a project-root upsert
+into `~/.cat-harness/registry.json`. Removing those is a user-visible behavior change (no more background
+process spawned per prompt, no more cross-project registry writes), even though the core routing/gating
+surface this contract defines is untouched — hence a MINOR bump (1.2.0), not a patch.
+
+- **Deleted `dashboard/`** in full: `dashboard/server/` (Node status server, registry, singleton,
+  launcher) and `dashboard/app/` (the Vite/React/FSD monitoring UI, including its committed `dist/`).
+- **`hooks/cat-hook.mjs`**: removed the G003 auto-start block (`catHarnessHomeDir`, `isServerLocallyLive`,
+  `spawnDetachedLauncher`, `upsertProjectRegistry`, `runAutoStart`) and its call from the router path.
+  The `node:child_process` (`spawn`) and `node:os` imports were only used by that block and are removed
+  with it. The UserPromptSubmit router still does its primary job — injecting the cat-harness routing
+  context block — and the phase-guard / mutation-guard / G1 state-protection code (PreToolUse) and the
+  Stop completion gate are untouched.
+- **`hooks/cat-hook.test.mjs`**: removed the now-dead auto-start, launcher-spawn, server.json-liveness,
+  and registry-upsert/parity test suites (12 tests); the phase-guard regression tests and all other
+  suites are unaffected.
+- **Docs**: DESIGN.md §10 ("Dashboard & Status Server Contract") is deleted in full; the `dashboard/`
+  file-tree entry, §1's "Dashboard is OUT-OF-SURFACE infrastructure" bullet, and §9's build-time-npm
+  exception for `dashboard/app/` are removed. §9 now states there is a single dependency exception left
+  in the repo (the vendored, git-committed WS2 tree-sitter runtime — not npm-installed). `.github/
+  workflows/ci.yml`'s now-moot "dashboard test suites are out of scope" comment is removed.
+- Historical CHANGELOG entries that mention the dashboard (0.4.0, 0.5.1, and others) are left as-is —
+  they describe what shipped at the time.
+
+## 1.1.0 — Design-QA VISUAL gate: mechanical PNG pixel-diff enforcement (2026-07-21)
+
+Non-breaking. Closes the last self-attested checkbox in the design-QA lane: the mandatory side-by-side
+visual pass (`references/design-qa.md`) used to be an honor-system checklist item ("I opened BOTH images
+and compared them"). It is now backed by a mechanical pixel diff the checkpoint gate itself enforces, the
+same way the numeric measurement matrix already backs the two-numbers rule.
+
+- **New `design visual` subcommand in `scripts/cat-state.mjs`** — a pure-Node PNG decoder
+  (`node:zlib.inflateSync` only, no npm dependency; colorType 0/2/4/6, 8-bit, non-interlaced; palette/
+  16-bit/interlaced fail closed with a remedy-naming error), letterbox + integer box-average downscale
+  onto a common canvas (cap 480px long edge), and an AA-tolerant per-pixel diff. Decoded against an
+  independently-written test encoder (not a self-consistent round-trip) exercising all 5 PNG scanline
+  filter types (None/Sub/Up/Average/Paeth) and colorTypes 2/6, plus a hand-computed exact-ratio fixture —
+  see `scripts/cat-state.test.mjs`'s "VISUAL decoder proof" tests.
+- **`qa.design.visual[]`** — a new, mandatory, per-declared-surface array composed ADDITIVELY into the
+  existing `validateDesignGate` (the numeric measurement matrix path is completely untouched; this is a
+  new check appended after the existing Critical/Major block, never a replacement). Three severity bands:
+  `None` / `Major` (waivable — reuses the exact same `qa.design.waived` + `user_acknowledged` mechanism as
+  numeric Major) / `Blocking` (sits outside the waiver system entirely, exactly like numeric Critical —
+  never waivable, exit 2, unconditionally audited as `design_visual_blocking`). Structural checks (both
+  images present, PNG-only — JPEG is explicitly rejected even though the generic `qa.artifacts` screenshot
+  check accepts it — decodable, non-blank, minimum 32px per side, registered in `qa.artifacts`) are
+  fail-closed and non-waivable, exactly like the numeric gate's row-parse failures. Recompute-authoritative:
+  the server always recomputes `raw_diff_ratio`/`diff_ratio`/`severity` from the real PNGs; a submitted
+  value is informational only and a submitted severity more lenient than the recompute is rejected.
+- **`Blocking` is decided from the RAW ratio ALONE, before `exclude_regions`.** `exclude_regions` (bounded
+  to 15% of the frame total; an over-cap attempt is dropped entirely and the diff is recomputed on the
+  full frame) can only ever move a surface between `Major` and `None` — it can NEVER pull a `Blocking`
+  surface down to `Major` or `None`, at ANY configured `designQa.visualDiffBlockThreshold`. An earlier
+  draft of this design computed `Blocking` from the POST-exclusion ratio and proved safety only for the
+  default threshold (0.75); a low project override (e.g. 0.50, exactly the "strict project lowers the
+  threshold" use case this override exists for) reopened a real bypass — a saturated 15% exclusion could
+  pull a raw-Blocking surface down to `adjusted_ratio` ≈0.41, under the Major floor, and pass unwaived.
+  The raw-ratio-only decision closes this for every valid override value, not just the default; see
+  `scripts/cat-state.test.mjs`'s "VISUAL pass-11 regression (b=0.50)" test, which pins the exact closed
+  bypass scenario.
+- **`.cat/settings.json` `designQa.visualDiffBlockThreshold`** — a new, narrow single-key settings reader
+  (this repo's `cat-state.mjs` previously never read `settings.json`; precedent: `deepInterview.
+  ambiguityThreshold`, see README Configuration). Valid range: strictly greater than the hardcoded
+  `VISUAL_DIFF_MAJOR_THRESHOLD` (0.45) and strictly less than 1; an out-of-range or malformed value falls
+  back to the default and is audited once (`design_visual_block_threshold_override_invalid`); an absent
+  file or an absent key is normal, silent default, no audit. `design visual`'s optional `--block-threshold`
+  is a DIAGNOSTIC-only override (never used by the checkpoint gate) that lets an agent preview a candidate
+  setting before writing it.
+- **Thresholds are PROVISIONAL, pre-calibration.** `VISUAL_DIFF_MAJOR_THRESHOLD` (0.45, hardcoded, not
+  settings-overridable) and the default `VISUAL_DIFF_BLOCK_THRESHOLD` (0.75) are set loose on purpose —
+  roughly 2x an estimated normal-noise ceiling — to avoid a false-block epidemic before any real
+  calibration corpus exists; every `Blocking` event is unconditionally audited specifically to start
+  accumulating that corpus. `raw_diff_ratio` tracks GROSS raw mismatch only (wrong page, broken/near-blank
+  render, totally different layout) — v1's magnitude discrimination is intentionally low; the real
+  enforcement closure this release ships is the STRUCTURAL fail-closed checks (missing/blank/undecodable/
+  one-sided/wrong-format), not fine-grained visual-quality scoring. Raise
+  `designQa.visualDiffBlockThreshold` per-project if your UI is legitimately high-noise.
+- **Docs.** `skills/ultragoal/references/design-qa.md`'s side-by-side pre-verdict checkbox now points at
+  the mechanical `design visual` result instead of a self-attestation, plus a new "Mechanical visual
+  enforcement" section and an updated `qa.design` schema block (`visual[]`, `raw_diff_ratio`/`diff_ratio`).
+  `skills/ultragoal/SKILL.md`'s completion-gate bullets (mechanical gate description + Clean check) now
+  require the mechanical visual result for design-sourced UI goals.
+
+## 1.0.0 — Code-graph subcommands + reviewer diet; Node floor raised (BREAKING) (2026-07-21)
+
+**BREAKING: the Node floor moves from 18 to 22.13.0 for the new `graph build`/`graph query`
+subcommands.** Every other hook and subcommand keeps working on Node 18+ unchanged; only the two new
+subcommands enforce the higher floor (a guard at the entry of each graph handler exits 1 with a clear
+message on a below-floor Node — see DESIGN.md §4). WS1 (reviewer diet) was originally scoped as a
+non-breaking 0.8.0, but it ships together with WS2 (code-graph) in this release, so it is folded into
+1.0.0 rather than released separately.
+
+- **New `graph build [--changed-only]` / `graph query --file <path> [--depth N]` subcommands in
+  `scripts/cat-state.mjs`.** `graph build` parses tracked JS/TS/TSX with a vendored Tree-sitter runtime
+  (`web-tree-sitter@0.24.7` + JS/TS/TSX grammar `.wasm` files, git-committed under
+  `scripts/vendor/tree-sitter/` — see that directory's `VENDOR.md` for exact versions, sha256s, and why
+  `0.24.7` rather than the nominal-latest `0.26.11`, which cannot load the only published
+  `tree-sitter-wasms` grammar build) and upserts nodes/edges into a REPO-scoped
+  `.cat/graph/graph.db` (SQLite, WAL). `graph query` is a read-only BFS over call/import edges from that
+  DB, up to `--depth` (default 2). Both subcommands dynamically import the builtin `node:sqlite` (still
+  "Experimental" upstream — a WATCH) only inside their own handlers, confining the blast radius of either
+  dependency to these two subcommands. Fail-open by design: the graph is a HINT, not a source of truth —
+  the vendored 0.24.7 parser is known to emit a false-positive `parse_status:"partial"` on some large
+  valid files (e.g. this repo's own `cat-state.mjs`), and `graph build` keeps whatever it managed to
+  extract rather than aborting. `agents/planner.md`, `architect.md`, `critic.md`, and `executor.md` now
+  document a code-exploration priority (external `.codegraph/` → `graph query` → Read/Grep/Glob) with the
+  same verify-with-Read/Grep caveat.
+- **Reviewer diet for ralplan (WS1).** `skills/ralplan/SKILL.md`'s consensus loop now varies the
+  architect/critic reviewer model and iteration cap by risk tier (`reviewer_tier`: `"full"` = `opus`,
+  cap 5, unchanged; `"lite"` = `sonnet`, cap 2, for everything outside deliberate mode's trigger set),
+  with mid-loop self-escalation back to `full` the moment a low-risk pass surfaces a high-risk trigger.
+  The join gate itself (Critic `OKAY` AND Architect `CLEAR`+`APPROVE` on the same artifact) is unchanged
+  and identical for both tiers — only who runs it and how many passes are allowed vary. Non-breaking.
+  `DESIGN.md` §6 and `README.md`'s ralplan section + agent table document the tier contract.
+- **Docs.** `README.md` and `DESIGN.md` updated throughout for the new Node floor, the vendored
+  dependency, the fourth hook event (`SubagentStop`, previously undocumented though already wired in
+  `hooks/hooks.json`), and the `.cat/graph/graph.db` repo-scoped state exception. `.github/workflows/ci.yml`
+  added: a Node 22.13.x/24.x matrix running `scripts/cat-state.test.mjs` and `hooks/cat-hook.test.mjs`
+  (dashboard/server test suites are intentionally out of scope for this workflow).
+- **Phase-guard no longer misreads heredoc-body prose as a mutation (follow-up to the 5af4595 arrow
+  fix).** The `PreToolUse` Bash mutation guard split commands on newlines, so every line of a `<<'DELIM'`
+  heredoc BODY became a fake "segment" — a markdown blockquote (`> …`), a `>=`/`<=` comparison, an
+  `a -> b`/`c => d` arrow, or plain `A > B` prose was read as an output redirect and DENIED, blocking
+  legitimate `cat-state.mjs artifact write` heredocs during ralplan/ultragoal planning phases. Fixed by
+  `stripHeredocBodies()` (heredoc bodies are literal data, removed before segment scanning; the opener
+  line — and any real redirect on it, `cat <<X > file` — is kept), plus a redirect-target guard so `>=`
+  is never a redirect. G1 (`.cat/` state) protection and the interpreter-heredoc-write (D3) check still
+  run on the un-stripped command, so a `.cat/` mutation inside a heredoc body is still denied even when
+  idle. +5 hook regression tests (hook suite 41/41).
+
 ## 0.7.0 — Two-numbers rule + `design diff` mechanical measurement diff (2026-07-19)
 
 Closes the two design-QA misses the 0.6.0 gate could not: an element measured by

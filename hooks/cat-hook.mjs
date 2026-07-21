@@ -13,10 +13,8 @@
  * Zero dependencies (node >= 18 builtins only). No network, no LLM calls.
  */
 
-import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -674,126 +672,7 @@ function buildRouterBlock(input) {
   return block;
 }
 
-// ---------------------------------------------------------------------------
-// Dashboard auto-start (G003): project registry auto-registration + a cheap
-// local liveness pre-check that spawns a detached launcher when stale/missing.
-// COMPLETELY ISOLATED from the router's emitted block: this runs in its own
-// try/catch, touches only ~/.cat-harness/{registry,server}.json, and NEVER
-// makes a network call itself (Node has no sync HTTP client — the detached
-// dashboard/server/launcher.mjs process, off this hook's timing budget, is the
-// only place allowed to do the authoritative health-token HTTP probe).
-//
-// Shapes below MIRROR dashboard/server/{constants,singleton,registry}.mjs
-// in-line rather than importing them, so a missing/broken dashboard/ tree can
-// never break router/pretool/stop (matches the codebase's existing accepted
-// duplication style, e.g. cat-hook.mjs's own SKILLS copy vs cat-state.mjs's).
-// ---------------------------------------------------------------------------
-
-/** Mirrors dashboard/server/constants.mjs's getHomeDir. */
-function catHarnessHomeDir() {
-  const override = process.env.CAT_HARNESS_HOME;
-  return override ? path.resolve(override) : path.join(os.homedir(), ".cat-harness");
-}
-
-/**
- * Cheap, local, synchronous liveness pre-check (mirrors
- * dashboard/server/singleton.mjs's isLocallyLive): process.kill(pid, 0)
- * (never signals; throws if no such process) PLUS a well-formed boot_nonce
- * shape check. This is ADVISORY ONLY, not authoritative — a PID reused by an
- * unrelated process after the real server died can still read as "alive"
- * here (see DESIGN.md §10 "PID-reuse posture"). The launcher's own
- * health-token HTTP probe is what actually self-corrects that case; the
- * operator remedy for the residual edge is deleting `server.json`.
- */
-function isServerLocallyLive(homeDir) {
-  let record;
-  try {
-    record = JSON.parse(fs.readFileSync(path.join(homeDir, "server.json"), "utf8"));
-  } catch {
-    return false; // missing or malformed JSON → not live
-  }
-  if (!record || typeof record !== "object") return false;
-  if (typeof record.boot_nonce !== "string" || record.boot_nonce.trim().length === 0) return false;
-  if (typeof record.pid !== "number") return false;
-  try {
-    process.kill(record.pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Spawns dashboard/server/launcher.mjs detached + unref'd and returns
- * immediately. In test mode (CAT_HARNESS_TEST_SPAWN_CAPTURE set), the spawn
- * is captured to a file instead of actually forked, so hermetic tests can
- * assert on it without ever touching a real port or process.
- */
-function spawnDetachedLauncher(pluginRoot) {
-  const launcherPath = path.join(pluginRoot, "dashboard", "server", "launcher.mjs");
-  const testCapture = process.env.CAT_HARNESS_TEST_SPAWN_CAPTURE;
-  if (testCapture) {
-    try {
-      const record = { command: process.execPath, args: [launcherPath], detached: true, unref: true, ts: nowIso() };
-      fs.appendFileSync(testCapture, `${JSON.stringify(record)}\n`);
-    } catch {
-      /* best-effort */
-    }
-    return;
-  }
-  const child = spawn(process.execPath, [launcherPath], { detached: true, stdio: "ignore" });
-  child.unref();
-}
-
-/** Mirrors dashboard/server/registry.mjs's upsertRegistryRoot (atomic tmp+rename write, idempotent). */
-function upsertProjectRegistry(homeDir, root) {
-  const file = path.join(homeDir, "registry.json");
-  let rawRoots = [];
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (parsed && typeof parsed === "object" && Array.isArray(parsed.roots)) rawRoots = parsed.roots;
-  } catch {
-    /* missing/corrupt → start fresh, fail open */
-  }
-  // Mirrors dashboard/server/registry.mjs's readRegistry normalization EXACTLY
-  // (filter non-empty strings, path.resolve-normalize, Set-dedup) so an
-  // externally-written registry.json carrying an un-normalized existing root
-  // (e.g. a trailing "/./" segment) can never cause a duplicate entry here.
-  const existingRoots = [
-    ...new Set(rawRoots.filter(r => typeof r === "string" && r.trim().length > 0).map(r => path.resolve(r))),
-  ];
-  const normalized = path.resolve(root);
-  if (existingRoots.includes(normalized)) return; // already registered — idempotent no-op, no write
-  writeJsonAtomic(file, { version: 1, roots: [...existingRoots, normalized], updated_at: nowIso() });
-}
-
-/**
- * Router auto-start step. Wrapped in its OWN try/catch so any failure here is
- * swallowed and can NEVER affect the router's emitted additionalContext block.
- */
-function runAutoStart(input) {
-  try {
-    const cwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd : process.cwd();
-    const homeDir = catHarnessHomeDir();
-
-    // Project auto-registration: gated on `.cat` already existing for this
-    // root, so a bare `cd` into a fresh, uninitialized repo never adds a
-    // dormant floor with nothing to show (matches the approved plan's
-    // registration-gate rationale).
-    if (fs.existsSync(path.join(cwd, ".cat"))) {
-      upsertProjectRegistry(homeDir, cwd);
-    }
-
-    if (!isServerLocallyLive(homeDir)) {
-      spawnDetachedLauncher(PLUGIN_ROOT);
-    }
-  } catch (error) {
-    warn(`auto-start degraded: ${error && error.message ? error.message : error}`);
-  }
-}
-
 function runRouter(input) {
-  runAutoStart(input);
   let block;
   try {
     block = buildRouterBlock(input);

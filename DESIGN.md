@@ -23,15 +23,6 @@ come from the gajae-code sources (see "Fidelity sources" at the bottom).
   (G004 reply capture)
 - **1 sanctioned state writer**: `scripts/cat-state.mjs`
 - **4 thin commands** (manual escape hatch): `/cat-harness:interview|plan|execute|team`
-- **Dashboard is OUT-OF-SURFACE infrastructure, not a 5th skill/agent** (`dashboard/`, §10): a
-  monitoring UI + status server layered over the `.cat` state this contract already defines. It never
-  gates or adds a user-facing workflow, and it never touches any project's `.cat/**` at all — it only
-  reads that disk state and renders it. It does hold exactly one narrow, honest exception to
-  read-only: `POST /api/unregister`, a loopback-only endpoint that removes a root from the dashboard's
-  OWN home-directory registry (`~/.cat-harness/registry.json`, never a project's `.cat/**`), symmetric
-  with the hook's existing registration write into that same file (see §10). Adding the dashboard, and
-  this one endpoint, does not change the 4-skill/4-agent count above; it lives alongside them, outside
-  the count.
 
 Lateral-panel personas (researcher / contrarian / simplifier) are prompt fragments inside the
 deep-interview skill run as generic subagents — NOT plugin agents (keeps the 4-agent surface).
@@ -61,18 +52,8 @@ cat-harness/
 │   ├── planner.md  ├── architect.md  ├── critic.md  └── executor.md
 ├── commands/
 │   ├── interview.md  ├── plan.md  ├── execute.md  └── team.md
-├── dashboard/                     # OUT-OF-SURFACE infra (§1) — status server + monitoring UI
-│   ├── server/                    # zero-dep Node status server + SSE (§10)
-│   └── app/                       # Vite/React/FSD dashboard UI — the ONE build-time npm-dep
-│                                   # surface (§9); README.md documents layout + dist regen
 └── README.md
 ```
-
-Dashboard runtime state does NOT live under this repo or any project's `.cat/`: it lives
-EXTERNALLY, under the user's home directory (`~/.cat-harness/`, override `CAT_HARNESS_HOME`) —
-`registry.json` (known project roots) and `server.json` (the live server's discovery record). See
-§10 for the full shape. This is a deliberate separation: `.cat/` stays per-project and
-git-ignorable; `~/.cat-harness/` is global, cross-project, and never committed.
 
 hooks.json command form: `node "${CLAUDE_PLUGIN_ROOT}/hooks/cat-hook.mjs" <mode>` (node required; document in README).
 
@@ -188,7 +169,14 @@ Write tool. Skills return receipt fields (run_id, path, sha256, verdict) — nev
 
 ## 4. Sanctioned writer CLI (`scripts/cat-state.mjs`)
 
-Zero-dependency Node (>=18). Subcommands (all take `--session <sid>`; stdin `-` accepted for JSON/file bodies):
+Node >=18 for every subcommand except `graph build`/`graph query`, which require Node 22.13.0+ and are
+the ONLY subsystem with a vendored runtime dependency: `web-tree-sitter@0.24.7` plus its JS/TS/TSX
+grammar `.wasm` files (`scripts/vendor/tree-sitter/`, git-committed, loaded only by relative path — see
+`scripts/vendor/tree-sitter/VENDOR.md`) and the builtin `node:sqlite` (unflagged at that floor; still
+"Experimental" upstream — a WATCH). Both are dynamically imported only inside the graph handlers, never
+at module top level, so a below-floor Node or an API drift in either dependency can only ever break these
+two subcommands — every other subcommand stays pure Node builtins. Subcommands (all take
+`--session <sid>`; stdin `-` accepted for JSON/file bodies):
 
 ```
 init                                      # create session tree + activity marker
@@ -218,7 +206,45 @@ design diff  --figma <path|-> --impl <path|->  # design-QA lane authoring aid: j
                                           # the checkpoint gate uses) only for well-formed pairs; refuse (exit 2) on
                                           # any unmeasured (extracted-but-not-measured) or malformed pair — the
                                           # mechanical two-numbers rule. Read-only: touches no session state.
+design visual --figma <path> --impl <path>     # design-QA lane authoring aid: pure-Node PNG pixel-diff (no
+  [--major-threshold N] [--block-threshold N]  # dependency; node:zlib.inflateSync only). Decodes both PNGs
+  [--exclude <json>]                           # (colorType 0/2/4/6, 8-bit, non-interlaced only), letterboxes +
+                                          # box-average downscales onto a common canvas, classifies None/Major/
+                                          # Blocking. Blocking is decided from raw_diff_ratio ALONE (before
+                                          # exclude_regions) — never waivable, same code-shape as numeric
+                                          # Critical. Read-only: touches no session state (--block-threshold is
+                                          # diagnostic-only; the checkpoint gate always resolves the threshold via
+                                          # .cat/settings.json designQa.visualDiffBlockThreshold, default 0.75).
+graph build  [--changed-only]             # Node 22.13.0+ only: parse tracked JS/TS/TSX with the vendored
+                                          # Tree-sitter runtime, upsert into REPO-scoped .cat/graph/graph.db
+                                          # (SQLite, WAL). --changed-only skips files whose sha256 is unchanged.
+                                          # Fail-open per file: the vendored 0.24.7 parser is known to emit a
+                                          # false-positive parse_status:"partial" on some large valid files
+                                          # (e.g. this repo's own cat-state.mjs, ~70 KiB — see VENDOR.md); it
+                                          # still keeps whatever nodes/edges it managed to extract rather than
+                                          # aborting the build. The graph is a HINT, not a source of truth.
+graph query  --file <path> [--depth N]    # Node 22.13.0+ only: read-only BFS over call/import edges from
+                                          # .cat/graph/graph.db for one file's own nodes plus transitive
+                                          # callers/dependents up to --depth (default 2). HINT, not a source
+                                          # of truth — verify critical-path facts with Read/Grep (§9).
 ```
+
+**Known limitation — `--changed-only` cross-file staleness**: `--changed-only`
+is a fast incremental mode that skips reparsing any file whose sha256 is
+unchanged, so it never recomputes inbound cross-file edges for dependents
+that were not reparsed. After a cross-file symbol rename or removal, a
+dependent file's caller/import edges into the renamed/removed symbol can
+persist as dangling even though the renamed file's own `stale` field (a
+sha256 comparison scoped to that one file) correctly reports `false` — a
+silent false negative on `graph query`'s caller/dependent data. Mitigation:
+run a full `graph build` (no `--changed-only`) after a cross-file rename for
+correct results. `graph build` records the build mode and a full-build
+generation counter in the `meta` table (`last_build_mode`,
+`full_build_generation`); `graph query` surfaces this as
+`incremental_since_full_build:true` whenever the most recent build was
+`--changed-only`, so callers can treat cross-file caller/dependent data as
+possibly stale even when `stale` is `false`, without paying for the
+expensive full inbound-edge recompute on every query.
 
 Completion receipt v2 (field name `plan_generation_sha256` kept for continuity): at
 `goal checkpoint --status complete`, AFTER the goal row is mutated (status, `completed_at`,
@@ -385,8 +411,9 @@ namespaced `subagent_type`/`agent_type` values only (`cat-harness:planner|archit
   `transcript_path` stays the LEADER's session transcript even for the inner dispatch; the child's own
   transcript is `agent_transcript_path` on `SubagentStop`, so `extractReplyExcerpt`'s tail-read
   fallback is unaffected. The hook threads the captured `parentAgentType` verbatim onto BOTH round-trip
-  lines as `parent_agent_type` (omitted when null); the dashboard's `whoToWhomLabel` renders
-  `{parent} → {child}` / `{child} → {parent}` when present, else `Lead → {child}` as before.
+  lines as `parent_agent_type` (omitted when null), so a downstream reader of
+  `state/dialogue-excerpts.jsonl` can render `{parent} → {child}` / `{child} → {parent}` when present,
+  else treat it as a top-level (`Lead → {child}`) dispatch.
 - **Writer policy**: `state/dialogue-pending.json` and `state/dialogue-excerpts.jsonl` live under
   `state/**`, so G1 auto-protects them from AGENT mutation tools. The hook's own inline writes (atomic
   tmp+rename, mirroring `audit.jsonl`'s append pattern) are sanctioned, as is the CLI's
@@ -438,15 +465,24 @@ show the working remediation invocation (the exact deactivation `state write` co
 
 ### ralplan (`skills/ralplan/SKILL.md`)
 - Pre-Execution Gate: vague execution request without auto-pass signals → offer deep-interview first.
-- Loop (≤5 iterations): `planner` agent drafts plan + RALPLAN-DR deliberation summary → persist via
+- Loop (cap by risk tier — full 5, lite 2; see Reviewer diet below): `planner` agent drafts plan + RALPLAN-DR deliberation summary → persist via
   `artifact write` (stage-`NN`-planner.md) → fresh `architect` (verdicts CLEAR/WATCH/BLOCK +
   APPROVE/COMMENT/REQUEST CHANGES) and fresh `critic` (OKAY/ITERATE/REJECT) review the SAME artifact
   (identified by path+sha256+stage_n), in parallel. Reviewer return discipline: architect/critic have
   no Bash and cannot run the writer, so each returns its full review BODY; the ORCHESTRATOR persists
   each body via `artifact write` and holds the receipts. Plan bodies are still never pasted by anyone.
   Join gate: Critic `OKAY` AND Architect `CLEAR`+`APPROVE` on the same artifact. Else consolidate feedback
-  → re-spawn planner with prior artifact path + feedback (fresh-spawn model). After 5 failed loops present
-  best version to the user.
+  → re-spawn planner with prior artifact path + feedback (fresh-spawn model). After the tier's cap of
+  failed loops (5 full, 2 lite) present best version to the user.
+- Reviewer diet (SHARED CONTRACT — does not weaken the join gate above): the architect/critic reviewer
+  model and iteration cap vary by risk tier, recorded in state as `reviewer_tier` (`"full"`/`"lite"`) and
+  `reviewer_model` (`"opus"`/`"sonnet"`). HIGH-risk tier (deliberate mode's trigger set) = `opus`, cap 5
+  (unchanged max). LOW-risk tier (everything else) = `sonnet`, cap 2. The Agent tool's per-spawn `model`
+  parameter carries the tier's model and takes precedence over `agents/architect.md`/`agents/critic.md`
+  frontmatter, which stays `opus` as the default/fallback. A mid-loop self-escalation (low-risk pass
+  surfaces a high-risk trigger) raises the tier to `full`/cap 5 immediately and is recorded in state and
+  the final ADR's Risks. The join gate formula itself — Critic `OKAY` AND Architect `CLEAR`+`APPROVE` on
+  the same artifact — is identical for both tiers; only who runs it and how many passes are allowed vary.
 - Post-consensus intent reconciliation: confirm every loop-made assumption with the user ONE AT A TIME
   via AskUserQuestion.
 - Final: ADR-style plan → `pending-approval.md`. Explicit structured approval → phase `handoff` → default
@@ -518,165 +554,27 @@ orchestrator via artifact paths (see §6), never inline dumps of plan bodies.
   options are labeled by outcome, not mechanism. Simplify the language, never the decision.
 - All JSON written by hooks/CLI: 2-space indent, trailing newline. All timestamps ISO8601 UTC.
 - Never `console.log` debug noise from hooks (stdout is the contract). Errors → stderr + audit.jsonl.
-- **Zero-dependency runtime, ONE deliberate build-time exception**: `hooks/`, `scripts/`, and
-  `dashboard/server/` are pure Node builtins — no `npm install` is ever required to run the plugin
-  or the status server. `dashboard/app/` (the Vite/React/FSD dashboard UI, §10) is the SOLE
-  npm-dependency surface in the repo, and it is build-time only: its compiled `dist/` is committed
-  to git so end users never run `npm install`/`npm run build` themselves
-  (`dashboard/server/server.mjs` serves the committed `dist/` directly). Drift between the
-  committed `dist/` and current `src/` is caught by `dashboard/app/scripts/check-dist-drift.mjs`
-  (`npm run check-dist-drift`), which rebuilds into a scratch temp dir with the same
-  `tsc -b && vite build` command and byte-diffs it against the committed `dist/` — the check itself
-  is Node builtins only, so verifying the exception adds no new dependency. Rebuild/verify with
-  Node ≥ 20.19 (Vite 8's floor) or the pinned toolchain: an older Node can emit a byte-different
-  bundle and trip a drift false-positive. This affects contributors regenerating `dist/` only —
-  end users just serve the committed static `dist/` and never rebuild.
-- Version 0.3.0 everywhere — bump on every released change (the plugin cache is keyed by version; same-version pushes may not reach installed users).
-
-## 10. Dashboard & Status Server Contract (`dashboard/server/`, `~/.cat-harness/`)
-
-A single global, stateless, singleton Node status server (Node builtins only — no runtime deps) that
-discovers every registered project's `.cat` tree and serves it over HTTP + SSE to the tycoon dashboard.
-Disk is the sole source of truth: the server holds no authoritative in-memory state, it rebuilds by
-rescanning `~/.cat-harness/**` and each registered root's `.cat/**` on boot and on every fresh
-full-snapshot request. This section is additive to DESIGN.md's existing per-project `.cat` state
-contract (§3) — it documents the NEW global, cross-project runtime directory the dashboard subsystem
-introduces outside any single project.
-
-**Home directory** (`~/.cat-harness/`, override via `CAT_HARNESS_HOME`):
-- `registry.json` — `{ version: 1, roots: ["/abs/project/a", ...], updated_at: ISO8601 }`. Atomic
-  tmp+rename write (`dashboard/server/registry.mjs`'s `upsertRegistryRoot`, mirrored inline in
-  `hooks/cat-hook.mjs`'s router step). Roots are added only once a project's `.cat` directory already
-  exists (registration gate — a bare `cd` into a fresh, uninitialized repo never adds a dormant floor).
-  A dedicated `fs.watch` on this file (`watcher.mjs`) reconciles added/removed roots into the live
-  per-project watcher set with no server restart. **Ghost-floor self-heal** (`registry.mjs`'s
-  `pruneMissingRoots`): a registered root whose DIRECTORY no longer exists on disk (a deleted temp
-  project, a moved repo) can only render as an empty, undismissable dormant floor and will never
-  re-register itself, so the server prunes it — on boot, on every fresh snapshot, and on registry
-  change — rewriting `registry.json` without it and broadcasting the same `removed` SSE event a real
-  unregister uses, so open clients drop the ghost live. Prunes ONLY on the clear signal that the root
-  path is absent, never merely because `.cat` is missing (a real project between runs legitimately has
-  a root but an empty/absent `.cat`).
-- `server.json` — `{ port, pid, token, boot_nonce, started_at }`. Written **only** after the server's
-  own `listen()` call has already succeeded (never speculatively — a failed bind can never masquerade
-  as live). `boot_nonce` (`crypto.randomUUID()`) + `started_at` make the singleton lifecycle race-safe
-  (see Singleton lifecycle below).
-- `launcher.log` — append-only JSONL, one structured line per launcher decision (`already_healthy`,
-  `stale_discovery_file`, `started`, `bind_failed`, `bind_failed_foreign_port_owner`). Diagnostic only,
-  never read by the server or hook.
-
-**Port, token, idle shutdown** (`dashboard/server/constants.mjs`):
-- Fixed default port **9223** (`DEFAULT_PORT`), override via `CAT_HARNESS_PORT`. Chosen adjacent to,
-  and specifically to avoid, port 9222 (Chrome DevTools/Playwright/agent-browser remote debugging),
-  which under the no-fallback rule below would otherwise silently fail to bind whenever Chrome remote
-  debugging is active on the same machine. **No automatic port fallback ever** — a bind failure is a
-  hard, logged failure (F16); `CAT_HARNESS_PORT` is an explicit, non-automatic escape hatch, never an
-  automatic retry.
-- A random per-boot health token (`generateToken()`, 24 random bytes hex) gates `/healthz` only.
-  `/api/snapshot` and `/api/stream` are intentionally unauthenticated — the server binds to
-  `127.0.0.1` only, so the loopback boundary is the actual access control for read-only dashboard data;
-  the token exists solely to let the launcher/hook prove liveness, not to gate general API access.
-- Idle auto-shutdown after 30 minutes of no request/SSE activity (`DEFAULT_IDLE_MS`, override via
-  `CAT_HARNESS_IDLE_MS`, `<= 0` disables it — test-only escape hatch).
-
-**The one mutating endpoint — `POST /api/unregister` (`dashboard/server/server.mjs`,
-`dashboard/server/registry.mjs`'s `removeRegistryRoot`)**: the server is honest about no longer being
-*strictly* read-only, but the mutation this endpoint performs is narrow and symmetric with the hook's
-own existing registration write. It is the real, server-side "폐업 처리" (close/retire a dormant
-floor) — replacing an earlier client-side-only localStorage hide that never touched disk. Body
-`{ "root": "<projectRoot>" }`; removes that root from `~/.cat-harness/registry.json`
-(resolved-path compare, atomic tmp+rename, mirroring `upsertRegistryRoot`) — a root that isn't present,
-or a missing registry.json, is a no-op success, never an error. **Loopback-only, strictly**: on top of
-the server's existing `listen(port, "127.0.0.1")` bind, the handler independently checks
-`isLoopbackAddress(req.socket.remoteAddress)` and rejects (403) anything else — defense in depth
-specifically because, unlike `/api/snapshot`/`/api/stream`, this one writes to disk. A malformed or
-non-object body (unparseable JSON, missing/non-string `root`) is a 400, never a crash. On success the
-response carries `{ ok: true, snapshot }` (the already-updated fresh snapshot), and the server also
-broadcasts a `removed` SSE event (`sse.mjs`'s `broadcastRemoved`, `{ root }`) so every OTHER
-already-connected dashboard client drops that floor immediately too — the drop counterpart to the
-existing per-project `delta` broadcast, added because a registry removal previously had no live-client
-notification at all (silently correct only for a client's *next* full reconnect). A project reappears
-automatically the moment its hook re-registers it (its `.cat` directory already existing is the
-existing registration gate above) — there is deliberately no separate "restore" affordance anymore.
-**Client-side failure feedback**: the browser's unregister call (`features/floor-unregister`'s
-`useUnregisterFloor`) never throws, but it now reports a non-OK/rejected request through an `onError`
-callback so `DashboardPage` can show a transient error banner ("폐업 실패 — 상태 서버 실행 중인지 확인").
-Previously the failure was swallowed silently, so an unregister against a down/unreachable server
-looked identical to nothing happening ("폐업 눌러도 안 사라짐") — the banner makes that visible.
-
-**Singleton lifecycle (compare-and-delete, `dashboard/server/singleton.mjs`)**: on graceful or idle
-shutdown, the server re-reads `server.json` fresh from disk immediately before unlinking and deletes it
-**only** on an exact `pid` AND `boot_nonce` match against its own in-memory identity. A mismatch (a
-newer instance already overwrote the file) skips the unlink and logs — an old instance's shutdown can
-never delete a newer instance's live discovery file.
-
-**Auto-start (router hook → detached launcher, G003, `hooks/cat-hook.mjs` + `dashboard/server/launcher.mjs`)**:
-1. On every `UserPromptSubmit`, the router does a **cheap, local, synchronous** liveness pre-check —
-   `fs.readFileSync` + `process.kill(pid, 0)` (never signals; throws if no such process) **plus** a
-   well-formed `boot_nonce` shape check — wrapped in its own try/catch, fully isolated from the
-   router's emitted `additionalContext` block. It also upserts the current project root into
-   `registry.json` (gated on `.cat` already existing). Neither step ever performs network I/O — Node
-   has no synchronous HTTP client, and the hook stays on its existing fast/fail-open budget.
-2. If the pre-check finds the discovery file missing, stale (dead pid), or malformed, the router
-   spawns `dashboard/server/launcher.mjs` **detached and `unref()`'d** and returns immediately —
-   the spawn cost is paid once per cold start/idle cycle, not per prompt.
-3. The launcher (a separate process, off the hook's timing budget) is the **only** place allowed to
-   make the authoritative network call: an HTTP GET to `http://127.0.0.1:<port>/healthz?token=<token>`
-   against whatever `server.json` currently says. A healthy `200 {ok:true}` response means a live
-   cat-harness server already exists — the launcher exits without starting a second one. Any other
-   outcome (no discovery file, connection refused, timeout, bad token, malformed body) is treated as
-   unhealthy, and the launcher starts a fresh server in-process (reusing `dashboard/server/server.mjs`),
-   becoming the running server itself (mirrors `dashboard/server/index.mjs`'s own SIGINT/SIGTERM
-   handling) once `listen()` succeeds.
-4. **No port fallback (F16).** If starting a fresh server hits `EADDRINUSE`, the probe above has
-   already ruled out a *healthy* cat-harness instance holding that port — so whatever is bound there
-   is a foreign occupant (or an unhealthy one). The launcher logs one structured
-   `bind_failed_foreign_port_owner` line to `launcher.log`, calls `shutdown()` to release its watcher,
-   and exits cleanly. It never retries another port and never lets the failure surface as a hook error
-   (the router already returned long before the launcher even started).
-
-**PID-reuse posture (advisory pre-check, accepted residual risk)**: the router's sync liveness
-pre-check is **advisory only**, never authoritative. `process.kill(pid, 0)` can succeed not because the
-original server is alive, but because the OS reassigned that exact pid to an unrelated process after
-the real server died — the hook would then wrongly conclude "alive" and never spawn a launcher. The
-`boot_nonce` shape check narrows this (rules out missing/corrupt/stale-format `server.json`), but the
-narrower case of a *reused pid* whose `server.json` content still happens to parse as well-formed
-remains a real, if rare, residual edge (large pid space on macOS makes near-term reuse uncommon). This
-is accepted rather than engineered away with a network probe in the hot hook path (which would
-reintroduce exactly the network-in-hook risk F16/the hook contract forbids) — the launcher's own
-health-token probe is the actual source of truth and self-corrects any false positive that reaches it:
-a foreign process squatting on a reused pid does not know the token in `server.json`, so the probe
-fails and the launcher starts a fresh server. **Operator remedy** for the vanishingly rare case where
-even the token happens to still validate (or the launcher itself cannot reach the port): delete
-`~/.cat-harness/server.json` — the next hook call relaunches cleanly.
-
-**Watch / debounce / SSE contract** (`watcher.mjs`, `sse.mjs`, F17 — no polling, ever): one
-`fs.watch({recursive:true})` per registered project's `.cat` directory, plus a dedicated watch on the
-home `registry.json`. Any event (including ordinary atomic tmp+rename writes) is treated only as a
-trigger for a full, coarse re-read — never byte-level diffing — debounced 100-200ms
-(`WATCH_DEBOUNCE_MS`) so a rapid multi-file write burst coalesces into one re-read. `/api/stream`
-sends a full snapshot on every (re)connect (rebuilt fresh from disk, never replayed in-memory state —
-F18-style guarantee: a missed watch event self-heals on the next reconnect), then `delta` events
-afterward as a per-changed-project full resend, and `removed` events (`{ root }`) when a project drops
-out of the registry — most directly via `POST /api/unregister` above, which broadcasts its own removal
-synchronously rather than waiting on the debounced registry watch, though a root removed by any other
-means (e.g. `registry.json` hand-edited) is still caught and broadcast the same way once the watch
-fires. SSE connection presence and requests both count as activity for the idle timer.
-
-**MCP-friendly JSON note**: `dashboard/server/snapshot.mjs`'s `buildSnapshot`/`buildProjectSnapshot`
-output (`{schemaVersion, generatedAt, projects: [{root, lit, sessions: [...]}]}`) is plain,
-stable-keyed, function-free JSON by construction — safe for a future MCP bridge to consume unchanged.
-No MCP server or bridge is implemented by this contract; the shape is designed to already be that
-friendly on day one.
-
-**Dashboard UI structure (`dashboard/app/`, Feature-Sliced Design slice map)**: `shared/` (SSE
-client + TS types mirroring the server's snapshot shape, `cn()` class-merge helper, shadcn/ui-style
-primitives) → `entities/` (`project`, `floor`, `cat` — pure snapshot→model mappings plus
-presentational rendering) → `features/` (`floor-inspect`, `cat-inspect`, `scene-controls`) →
-`widgets/` (`office-scene` the building + cats + speech bubbles, `side-panel` goals/phases/
-receipts/dialogue timeline, `floor-list` quick-jump nav) → `pages/dashboard` (composition root).
-This is the build-time npm-dependency surface described in §9; see `dashboard/app/README.md` for
-the full layout, the committed-`dist`/drift-check mechanism, and asset provenance.
+- **Zero-install runtime, ONE deliberate dependency exception — it does not require an end-user `npm
+  install`**: `hooks/` is pure Node builtins throughout; `scripts/cat-state.mjs` is pure Node builtins
+  EXCEPT its `graph build`/`graph query` subcommands (§4). There is no npm-dependency subsystem anywhere
+  else in the repo.
+  1. **Vendored runtime exception (`scripts/cat-state.mjs` graph subcommands, Node 22.13.0+ only)**:
+     `web-tree-sitter@0.24.7` plus JS/TS/TSX grammar `.wasm` files are vendored and git-committed under
+     `scripts/vendor/tree-sitter/` (see that directory's `VENDOR.md` for pinned versions, sha256s, and
+     why `0.24.7` rather than the nominal-latest `0.26.11` — a grammar-ABI incompatibility with
+     `tree-sitter-wasms@0.1.13`), loaded only by relative path so no `node_modules` resolution is ever
+     needed. Paired with the builtin `node:sqlite` (unflagged at 22.13.0+; still "Experimental" upstream
+     — a WATCH), dynamically imported only inside the graph handlers (blast-radius confinement: an API
+     drift in either can only break these two subcommands). Every other subcommand, and every hook,
+     still runs on Node 18+ with zero dependencies of any kind. This vendored tree is git-committed, not
+     npm-installed, so it does not reintroduce an `npm install` step for end users.
+- `.cat/graph/graph.db` is the one documented exception to the per-session `.cat/_session-{id}/` layout
+  (§3): it is REPO-scoped (a sibling of `.cat/settings.json`), because a code graph describes the
+  repository, not a single session. It still falls fully under the G1 writer-policy doctrine (§3): only
+  `cat-state.mjs graph build` may mutate it, same as every other runtime-owned path.
+- Version 1.0.0 everywhere as of this change (bump on every released change — the plugin cache is keyed
+  by version; same-version pushes may not reach installed users). BREAKING: the Node floor moves from 18
+  to 22.13.0 for the new `graph build`/`graph query` subcommands (see CHANGELOG.md).
 
 ## Fidelity sources (read before writing)
 

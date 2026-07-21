@@ -1,17 +1,9 @@
 /**
- * hooks/cat-hook.test.mjs — regression + G003 auto-start coverage for
- * hooks/cat-hook.mjs. cat-hook.mjs's main() calls process.exit(0) directly, so
- * every case here spawns it as a real child process (matching its actual
- * invocation contract: JSON on stdin, JSON on stdout, exit 0) rather than
- * importing its functions in-process.
- *
- * G003 hermeticism: CAT_HARNESS_HOME always points at a fresh tmp dir (never
- * the real ~/.cat-harness) and CAT_HARNESS_TEST_SPAWN_CAPTURE always points at
- * a tmp file, so the router's detached-launcher spawn is CAPTURED to that file
- * instead of an actual process fork ever happening — no real port is ever
- * touched and no real network call is ever possible from these tests (the
- * auto-start code path itself contains no http/net import at all — see the
- * dedicated source-inspection test below).
+ * hooks/cat-hook.test.mjs — regression coverage for hooks/cat-hook.mjs.
+ * cat-hook.mjs's main() calls process.exit(0) directly, so every case here
+ * spawns it as a real child process (matching its actual invocation contract:
+ * JSON on stdin, JSON on stdout, exit 0) rather than importing its functions
+ * in-process.
  */
 
 import assert from "node:assert/strict";
@@ -21,16 +13,9 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { upsertRegistryRoot } from "../dashboard/server/registry.mjs";
-import { isLocallyLive, writeServerJson } from "../dashboard/server/singleton.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK_PATH = path.join(HERE, "cat-hook.mjs");
-const LAUNCHER_PATH = path.join(HERE, "..", "dashboard", "server", "launcher.mjs");
-
-function mkTmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "cat-harness-hook-home-"));
-}
 
 function mkTmpProject({ withCat = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cat-harness-hook-project-"));
@@ -38,90 +23,28 @@ function mkTmpProject({ withCat = false } = {}) {
   return dir;
 }
 
-let anonymousCaptureHome = null;
-
-/**
- * Runs cat-hook.mjs as a real child process — its actual invocation contract.
- * ALWAYS defaults CAT_HARNESS_TEST_SPAWN_CAPTURE to a throwaway tmp file
- * unless the caller overrides it, so NO test invocation here can ever trigger
- * a real detached spawn by omission — hermeticism must not depend on every
- * call site remembering to opt in.
- */
+/** Runs cat-hook.mjs as a real child process — its actual invocation contract. */
 function runHook(mode, input, envOverrides = {}) {
-  if (!anonymousCaptureHome) anonymousCaptureHome = mkTmpHome();
-  const defaultCapture = path.join(anonymousCaptureHome, `unused-capture-${Math.random().toString(36).slice(2)}.jsonl`);
   const result = spawnSync(process.execPath, [HOOK_PATH, mode], {
     input: JSON.stringify(input),
-    env: { ...process.env, CAT_HARNESS_TEST_SPAWN_CAPTURE: defaultCapture, ...envOverrides },
+    env: { ...process.env, ...envOverrides },
     encoding: "utf8",
     timeout: 10000,
   });
   return result;
 }
 
-function readSpawnCaptures(file) {
-  try {
-    return fs
-      .readFileSync(file, "utf8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map(line => JSON.parse(line));
-  } catch {
-    return [];
-  }
-}
-
-function readRegistry(homeDir) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(homeDir, "registry.json"), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Regression guard: the router's emitted block is IDENTICAL regardless of
-// what the auto-start step decides to do (spawn or not, register or not).
-// ---------------------------------------------------------------------------
-
-test("regression: router emits the same additionalContext block whether or not auto-start spawns a launcher", () => {
-  const projectNoCat = mkTmpProject({ withCat: false });
-  const homeMissing = mkTmpHome(); // triggers a spawn (no server.json)
-  const homeLive = mkTmpHome(); // will NOT trigger a spawn (fresh live self-record)
-  fs.writeFileSync(
-    path.join(homeLive, "server.json"),
-    JSON.stringify({ port: 9223, pid: process.pid, token: "t", boot_nonce: "live-nonce", started_at: "x" }),
-  );
-  const capture1 = path.join(mkTmpHome(), "spawn-capture-1.jsonl");
-  const capture2 = path.join(mkTmpHome(), "spawn-capture-2.jsonl");
-  const input = { cwd: projectNoCat, session_id: "testsid", prompt: "hello" };
-
-  const a = runHook("router", input, { CAT_HARNESS_HOME: homeMissing, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture1 });
-  const b = runHook("router", input, { CAT_HARNESS_HOME: homeLive, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture2 });
-
-  assert.equal(a.status, 0);
-  assert.equal(b.status, 0);
-  assert.equal(a.stdout, b.stdout, "the emitted router block must never be affected by the auto-start outcome");
-  assert.ok(a.stdout.includes("<cat-harness-router>"));
-
-  // Sanity: the two scenarios really did diverge on the auto-start decision itself.
-  assert.equal(readSpawnCaptures(capture1).length, 1, "missing server.json must trigger a spawn");
-  assert.equal(readSpawnCaptures(capture2).length, 0, "a live self-record must NOT trigger a spawn");
-});
-
-test("regression: pretool mutation-guard (Write to .cat/state) is unaffected by CAT_HARNESS_HOME/auto-start", () => {
+test("regression: pretool mutation-guard (Write to .cat/state) is unaffected by env overrides", () => {
   const projectWithCat = mkTmpProject({ withCat: true });
   const sessionDir = path.join(projectWithCat, ".cat", "_session-testsid");
   fs.mkdirSync(sessionDir, { recursive: true });
-  const home = mkTmpHome();
   const input = {
     cwd: projectWithCat,
     session_id: "testsid",
     tool_name: "Write",
     tool_input: { file_path: ".cat/_session-testsid/state/foo.json" },
   };
-  const result = runHook("pretool", input, { CAT_HARNESS_HOME: home });
+  const result = runHook("pretool", input);
   assert.equal(result.status, 0);
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.hookSpecificOutput.permissionDecision, "deny");
@@ -245,270 +168,12 @@ test("security: a `.cat/` state mutation inside a heredoc BODY is STILL denied e
   assert.equal(parsed.hookSpecificOutput.permissionDecision, "deny", "a `.cat/` mutation in a heredoc body must still be caught (G1, even when idle)");
 });
 
-test("regression: stop with no state dir is a silent no-op regardless of CAT_HARNESS_HOME", () => {
+test("regression: stop with no state dir is a silent no-op", () => {
   const projectWithCat = mkTmpProject({ withCat: true });
-  const home = mkTmpHome();
   const input = { cwd: projectWithCat, session_id: "testsid" };
-  const result = runHook("stop", input, { CAT_HARNESS_HOME: home });
+  const result = runHook("stop", input);
   assert.equal(result.status, 0);
   assert.equal(result.stdout, "");
-});
-
-// ---------------------------------------------------------------------------
-// G003: liveness pre-check → spawn decision
-// ---------------------------------------------------------------------------
-
-test("auto-start: fresh self-written server.json with a live pid + well-formed nonce → NO spawn", () => {
-  const home = mkTmpHome();
-  fs.writeFileSync(
-    path.join(home, "server.json"),
-    JSON.stringify({ port: 9223, pid: process.pid, token: "t", boot_nonce: "well-formed", started_at: "x" }),
-  );
-  const capture = path.join(mkTmpHome(), "capture.jsonl");
-  const result = runHook(
-    "router",
-    { cwd: mkTmpProject(), session_id: "s1", prompt: "hi" },
-    { CAT_HARNESS_HOME: home, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture },
-  );
-  assert.equal(result.status, 0);
-  assert.equal(readSpawnCaptures(capture).length, 0);
-});
-
-test("auto-start: missing server.json → spawn requested (correct launcher path, detached, unref)", () => {
-  const home = mkTmpHome();
-  const capture = path.join(mkTmpHome(), "capture.jsonl");
-  const result = runHook(
-    "router",
-    { cwd: mkTmpProject(), session_id: "s1", prompt: "hi" },
-    { CAT_HARNESS_HOME: home, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture },
-  );
-  assert.equal(result.status, 0);
-  const captures = readSpawnCaptures(capture);
-  assert.equal(captures.length, 1);
-  assert.equal(path.resolve(captures[0].args[0]), path.resolve(LAUNCHER_PATH));
-  assert.equal(captures[0].detached, true);
-  assert.equal(captures[0].unref, true);
-});
-
-test("auto-start: dead-pid server.json → spawn requested", () => {
-  const home = mkTmpHome();
-  fs.writeFileSync(
-    path.join(home, "server.json"),
-    JSON.stringify({ port: 9223, pid: 999999, token: "t", boot_nonce: "well-formed", started_at: "x" }),
-  );
-  const capture = path.join(mkTmpHome(), "capture.jsonl");
-  const result = runHook(
-    "router",
-    { cwd: mkTmpProject(), session_id: "s1", prompt: "hi" },
-    { CAT_HARNESS_HOME: home, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture },
-  );
-  assert.equal(result.status, 0);
-  assert.equal(readSpawnCaptures(capture).length, 1);
-});
-
-test("auto-start: malformed (missing) boot_nonce with a live pid → spawn requested", () => {
-  const home = mkTmpHome();
-  fs.writeFileSync(path.join(home, "server.json"), JSON.stringify({ port: 9223, pid: process.pid, token: "t" }));
-  const capture = path.join(mkTmpHome(), "capture.jsonl");
-  const result = runHook(
-    "router",
-    { cwd: mkTmpProject(), session_id: "s1", prompt: "hi" },
-    { CAT_HARNESS_HOME: home, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture },
-  );
-  assert.equal(result.status, 0);
-  assert.equal(readSpawnCaptures(capture).length, 1);
-});
-
-test("auto-start: corrupt (non-JSON) server.json → spawn requested (fail-open)", () => {
-  const home = mkTmpHome();
-  fs.writeFileSync(path.join(home, "server.json"), "not json at all");
-  const capture = path.join(mkTmpHome(), "capture.jsonl");
-  const result = runHook(
-    "router",
-    { cwd: mkTmpProject(), session_id: "s1", prompt: "hi" },
-    { CAT_HARNESS_HOME: home, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture },
-  );
-  assert.equal(result.status, 0);
-  assert.equal(readSpawnCaptures(capture).length, 1);
-});
-
-// ---------------------------------------------------------------------------
-// G003: registry auto-registration
-// ---------------------------------------------------------------------------
-
-test("registry upsert: router adds the cwd when .cat exists, and is idempotent (no dupes) across repeated calls", () => {
-  const home = mkTmpHome();
-  const project = mkTmpProject({ withCat: true });
-  const input = { cwd: project, session_id: "s1", prompt: "hi" };
-
-  runHook("router", input, { CAT_HARNESS_HOME: home });
-  const first = readRegistry(home);
-  assert.deepEqual(first.roots, [path.resolve(project)]);
-
-  runHook("router", input, { CAT_HARNESS_HOME: home });
-  const second = readRegistry(home);
-  assert.deepEqual(second.roots, [path.resolve(project)], "re-running the router must not duplicate the root");
-});
-
-test("registry upsert: writes are atomic (tmp+rename, no leftover .tmp.* files, valid JSON on every write)", () => {
-  const home = mkTmpHome();
-  const project = mkTmpProject({ withCat: true });
-  runHook("router", { cwd: project, session_id: "s1", prompt: "hi" }, { CAT_HARNESS_HOME: home });
-  const entries = fs.readdirSync(home);
-  assert.ok(!entries.some(name => name.includes(".tmp.")), "no atomic-write temp file should survive");
-  const parsed = readRegistry(home);
-  assert.equal(parsed.version, 1);
-  assert.ok(typeof parsed.updated_at === "string" && parsed.updated_at.length > 0);
-});
-
-test("registry gate: a project WITHOUT .cat is never auto-registered", () => {
-  const home = mkTmpHome();
-  const project = mkTmpProject({ withCat: false });
-  runHook("router", { cwd: project, session_id: "s1", prompt: "hi" }, { CAT_HARNESS_HOME: home });
-  assert.equal(readRegistry(home), null, "no registry.json should be written for an uninitialized project");
-});
-
-// ---------------------------------------------------------------------------
-// G003: integration — one router call triggers BOTH registry upsert AND a
-// detached-spawn stub, and never makes a real network call.
-// ---------------------------------------------------------------------------
-
-test("integration: a single UserPromptSubmit triggers registry upsert AND a detached launcher spawn (via the test stub)", () => {
-  const home = mkTmpHome();
-  const project = mkTmpProject({ withCat: true });
-  const capture = path.join(mkTmpHome(), "capture.jsonl");
-  const result = runHook(
-    "router",
-    { cwd: project, session_id: "s1", prompt: "hello" },
-    { CAT_HARNESS_HOME: home, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture },
-  );
-  assert.equal(result.status, 0);
-
-  const registry = readRegistry(home);
-  assert.deepEqual(registry.roots, [path.resolve(project)]);
-
-  const captures = readSpawnCaptures(capture);
-  assert.equal(captures.length, 1);
-  assert.equal(captures[0].command, process.execPath);
-  assert.equal(path.resolve(captures[0].args[0]), path.resolve(LAUNCHER_PATH));
-  assert.equal(captures[0].detached, true);
-  assert.equal(captures[0].unref, true);
-});
-
-test("source inspection: the router auto-start code path imports no HTTP/network module — it CANNOT make a network call", () => {
-  const source = fs.readFileSync(HOOK_PATH, "utf8");
-  assert.ok(!/from\s+["']node:https?["']/.test(source), "cat-hook.mjs must never import node:http or node:https");
-  assert.ok(!/from\s+["']node:net["']/.test(source), "cat-hook.mjs must never import node:net");
-});
-
-// ---------------------------------------------------------------------------
-// Parity guards (architect review, MEDIUM finding): hooks/cat-hook.mjs
-// deliberately MIRRORS dashboard/server/{registry,singleton}.mjs's shapes
-// inline rather than importing them (isolation — a broken dashboard/ tree
-// must never break the hook). Nothing else pins those two copies together,
-// so if the canonical modules' shape/semantics drift (a field rename, a
-// dedup-semantics change, a tightened nonce check, ...) the hook's copy could
-// silently diverge. These two tests cross-check the hook's BLACK-BOX behavior
-// (subprocess, test-mode) against the CANONICAL functions' actual output for
-// the same inputs, so a drift in either direction fails loudly here instead
-// of only being caught by human review.
-// ---------------------------------------------------------------------------
-
-function seedRawRegistry(homeDir, rawRoots) {
-  if (rawRoots === null) return; // exercises the "missing registry.json" case
-  fs.mkdirSync(homeDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(homeDir, "registry.json"),
-    `${JSON.stringify({ version: 1, roots: rawRoots, updated_at: "2020-01-01T00:00:00.000Z" }, null, 2)}\n`,
-  );
-}
-
-function readRawRegistryFile(homeDir) {
-  return JSON.parse(fs.readFileSync(path.join(homeDir, "registry.json"), "utf8"));
-}
-
-test("parity: registry upsert — hook's inline mirror matches canonical dashboard/server/registry.mjs (empty / fresh / duplicate / un-normalized-existing-root)", () => {
-  const freshProject = mkTmpProject({ withCat: true }); // the NEW root every scenario registers
-  const otherProjectDir = path.join(mkTmpHome(), "other-project"); // an unrelated EXISTING root
-
-  const scenarios = [
-    { name: "empty/missing registry.json", initialRaw: null },
-    { name: "fresh root added alongside an existing normalized root", initialRaw: [path.resolve(otherProjectDir)] },
-    { name: "duplicate root (already present, exact resolved form)", initialRaw: [path.resolve(freshProject)] },
-    {
-      // A literal, deliberately un-normalized string (NOT built via path.join,
-      // which would normalize it away before it ever reached the file) —
-      // exactly the shape an externally-written registry.json could carry.
-      name: "externally-written registry.json with an UN-NORMALIZED existing root path",
-      initialRaw: [`${otherProjectDir}/./`],
-    },
-  ];
-
-  for (const scenario of scenarios) {
-    const hookHome = mkTmpHome();
-    const canonicalHome = mkTmpHome();
-    seedRawRegistry(hookHome, scenario.initialRaw);
-    seedRawRegistry(canonicalHome, scenario.initialRaw);
-
-    // Canonical side: dashboard/server/registry.mjs's OWN upsert, called directly.
-    upsertRegistryRoot(canonicalHome, freshProject);
-
-    // Hook side: the SAME operation via the router hook's inline mirror (real
-    // subprocess, test-mode spawn capture so no real launcher is forked).
-    const result = runHook("router", { cwd: freshProject, session_id: "s1", prompt: "hi" }, { CAT_HARNESS_HOME: hookHome });
-    assert.equal(result.status, 0, `[${scenario.name}] router subprocess must exit 0`);
-
-    const hookFile = readRawRegistryFile(hookHome);
-    const canonicalFile = readRawRegistryFile(canonicalHome);
-    assert.equal(hookFile.version, canonicalFile.version, `[${scenario.name}] version field must match canonical`);
-    assert.deepEqual(
-      hookFile.roots,
-      canonicalFile.roots,
-      `[${scenario.name}] hook-written registry.json roots must be IDENTICAL to canonical registry.mjs's own upsert output (same normalization + dedup semantics)`,
-    );
-  }
-});
-
-test("parity: server.json liveness pre-check — hook's spawn decision matches canonical singleton.mjs's isLocallyLive (live / dead-pid / malformed-nonce / missing)", () => {
-  const cases = [
-    {
-      name: "live self pid + well-formed nonce",
-      setup: home => writeServerJson(home, { port: 9223, pid: process.pid, token: "t", bootNonce: "well-formed", startedAt: "x" }),
-    },
-    {
-      name: "dead pid",
-      setup: home => writeServerJson(home, { port: 9223, pid: 999999, token: "t", bootNonce: "well-formed", startedAt: "x" }),
-    },
-    {
-      name: "malformed (empty) boot_nonce",
-      setup: home => writeServerJson(home, { port: 9223, pid: process.pid, token: "t", bootNonce: "", startedAt: "x" }),
-    },
-    {
-      name: "missing server.json",
-      setup: () => {},
-    },
-  ];
-
-  for (const c of cases) {
-    const home = mkTmpHome();
-    c.setup(home);
-    const canonicalLive = isLocallyLive(home); // dashboard/server/singleton.mjs's own verdict
-
-    const capture = path.join(mkTmpHome(), "capture.jsonl");
-    const result = runHook(
-      "router",
-      { cwd: mkTmpProject(), session_id: "s1", prompt: "hi" },
-      { CAT_HARNESS_HOME: home, CAT_HARNESS_TEST_SPAWN_CAPTURE: capture },
-    );
-    assert.equal(result.status, 0, `[${c.name}] router subprocess must exit 0`);
-    const spawned = readSpawnCaptures(capture).length > 0;
-
-    assert.equal(
-      spawned,
-      !canonicalLive,
-      `[${c.name}] hook's spawn decision (spawned=${spawned}) must be the exact inverse of canonical isLocallyLive (${canonicalLive})`,
-    );
-  }
 });
 
 // ---------------------------------------------------------------------------
@@ -939,8 +604,7 @@ test("G004 regression: Task tool_name is accepted with the same contract as Agen
 // directive line appears ONLY when a design URL is present.
 // ---------------------------------------------------------------------------
 function routerContext(prompt) {
-  const home = mkTmpHome();
-  const res = runHook("router", { cwd: process.cwd(), session_id: "designsid", prompt }, { CAT_HARNESS_HOME: home });
+  const res = runHook("router", { cwd: process.cwd(), session_id: "designsid", prompt });
   assert.equal(res.status, 0);
   return JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
 }

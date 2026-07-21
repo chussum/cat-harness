@@ -1,6 +1,6 @@
 ---
 name: ralplan
-description: Consensus planning workflow — a planner agent drafts with RALPLAN-DR deliberation, fresh architect and critic agents review the same persisted artifact in parallel until join-gate consensus (max 5 iterations), then intent reconciliation, an ADR-style pending-approval plan, and a structured approval handoff to ultragoal or team. Use for clear-but-risky work — requirements known but non-trivial architecture, sequencing, or verification risk (migration, security, breaking change, data loss, multi-system; router ladder rule 3) — when the user says "consensus plan" or "$ralplan", or on an incoming deep-interview handoff. Planning only; never implements.
+description: Consensus planning workflow — a planner agent drafts with RALPLAN-DR deliberation, fresh architect and critic agents review the same persisted artifact in parallel until join-gate consensus (iteration cap by risk tier — 5 for full/high-risk, 2 for lite/low-risk), then intent reconciliation, an ADR-style pending-approval plan, and a structured approval handoff to ultragoal or team. Use for clear-but-risky work — requirements known but non-trivial architecture, sequencing, or verification risk (migration, security, breaking change, data loss, multi-system; router ladder rule 3) — when the user says "consensus plan" or "$ralplan", or on an incoming deep-interview handoff. Planning only; never implements.
 ---
 
 # Ralplan (Consensus Planning)
@@ -77,6 +77,47 @@ scenarios) plus an expanded test plan (unit/integration/e2e/observability). Enab
 asks, or auto-enable for explicit auth/security, migration, destructive, incident, compliance/PII, or
 public-API-breakage risk. Record the chosen mode in the planner prompt and in state (`"mode"` field).
 
+**Reviewer diet (risk tier → reviewer model + iteration cap)**: deliberation mode also sets the risk
+tier that governs which model reviews the plan and how many re-review passes are allowed before
+escalating to the user. This is orthogonal to the join gate itself — the gate formula (step 4 below)
+never changes; only who runs it and how many times.
+
+- **HIGH-risk tier** (`reviewer_tier: "full"`) — the same trigger set as deliberate mode above
+  (explicit auth/security, migration, destructive, incident, compliance/PII, or public-API-breakage).
+  Reviewers = `opus`, iteration cap = 5 (the existing max — FIXED, unchanged).
+- **LOW-risk tier** (`reviewer_tier: "lite"`) — everything else (short mode's default territory).
+  Reviewers = `sonnet`, iteration cap = 2.
+
+Record the tier alongside the mode in state. `state write`'s free-merge already accepts unknown
+top-level keys (no `cat-state.mjs` schema change needed) — the state-write JSON examples now carry
+two extra fields:
+
+```
+cat-state state write --session <sid> --skill ralplan --json '{"skill":"ralplan","active":true,
+  "current_phase":"planner","run_id":"<run_id>","reviewer_tier":"lite","reviewer_model":"sonnet",
+  "hud":{"nextAction":"planner drafting plan"}}'
+```
+
+For a high-risk run the same write instead carries `"reviewer_tier":"full","reviewer_model":"opus"`.
+
+**Step 0 — reviewer-model smoke check** (run before committing to the low-risk `sonnet` reviewer
+tier, ahead of the step-3 fan-out): "the reviewer was actually spawned with `model: sonnet`" has NO
+automatable unit assertion — the Agent tool's per-spawn `model` parameter is a runtime contract
+between this skill and the platform, not something `cat-state.mjs` or a unit test can observe. For a
+`lite`-tier pass, do a cheap smoke check that a subagent can actually be spawned with `model: sonnet`
+before relying on it for the real review; treat this as manual/smoke verification only, never as an
+automated test assertion. On smoke-check failure, fall back in this order: (a) keep `opus` and defer
+the diet for this run (`reviewer_tier` stays `"full"`), or, only if (a) is unavailable, (b)
+mechanical-classify as a last resort. Do not start the step-3 fan-out for a `lite`-tier pass without
+this smoke check having run (or having failed with a recorded fallback).
+
+**Self-escalation rule**: if a `lite`-tier pass surfaces a HIGH-risk trigger mid-review (any
+architect or critic finding that matches the HIGH-risk trigger set above), immediately escalate:
+switch `reviewer_tier` to `"full"`, `reviewer_model` to `"opus"`, and the iteration cap to 5 for the
+remainder of the run, even if some low-risk iterations were already spent. Record the escalation via
+`state write` (the `reviewer_tier`/`reviewer_model` fields) and in the final ADR's **Risks** section
+so the plan's audit trail shows why the tier changed mid-run.
+
 ## Artifact & receipt contract
 
 Each stage persists via:
@@ -133,6 +174,12 @@ sharing the same `NN`.
    (`path`, `sha256`, `stage_n`). Critic is plan-only here and never consumes architect output, so
    the two lanes always run in the same parallel batch; if a critic pass ever had to evaluate
    architect findings, run it sequentially after the architect and apply the same join gate.
+   Pass an explicit per-spawn `model` parameter on both Agent calls, set from the current
+   `reviewer_tier` (Deliberation mode section): `model: opus` for `"full"`, `model: sonnet` for
+   `"lite"`. The Agent tool's per-spawn `model` parameter takes precedence over the
+   agent-definition frontmatter — `agents/architect.md` and `agents/critic.md` keep `model: opus`
+   in frontmatter as the default/fallback (used when no tier is set, or the step-0 smoke check
+   failed); do not edit those frontmatter files.
    Each review prompt must include: the artifact identity triple, "read the plan from that path on
    disk", and the return contract below. Neither agent can run the writer (no Bash) — each returns
    its review BODY for the orchestrator to persist:
@@ -155,8 +202,10 @@ sharing the same `NN`.
    reviewed a stale artifact, re-spawn that lane against the current receipt. Never finalize from
    only one review lane. **Consensus = critic `OKAY` AND architect `CLEAR` + `APPROVE`** for the same
    planner artifact/pass.
-5. **Re-review loop** (max 5 iterations): any critic non-`OKAY` (`ITERATE` or `REJECT`) or architect
-   result that is not `CLEAR`/`APPROVE` MUST run the same full closed loop:
+5. **Re-review loop** (tier-based cap — `full` = 5 iterations, unchanged; `lite` = 2 iterations; a
+   mid-loop self-escalation per the Deliberation mode section immediately raises the cap to 5): any
+   critic non-`OKAY` (`ITERATE` or `REJECT`) or architect result that is not `CLEAR`/`APPROVE` MUST
+   run the same full closed loop:
    a. Collect architect + critic feedback (read the two persisted review artifacts from disk;
       consolidate findings and required changes into one compact feedback block).
    b. `state write` phase `revision`, increment `N`, then **fresh-spawn** a new `planner` agent with:
@@ -167,8 +216,8 @@ sharing the same `NN`.
    c. `state write` phase `review`, then return to the step 3 fan-out with fresh architect + critic
       at the new `<NN>`.
    d. Re-join both verdicts for the same revised planner artifact/pass (step 4).
-   e. Repeat until consensus or 5 iterations are reached.
-   f. At 5 iterations without consensus, present the best version to the user via AskUserQuestion
+   e. Repeat until consensus or the current tier's cap (5 for `full`, 2 for `lite`) is reached.
+   f. At the tier's cap without consensus, present the best version to the user via AskUserQuestion
       (pick the pass closest to consensus — prefer `CLEAR`/`APPROVE`/`OKAY` counts, no
       `BLOCK`/`REJECT`): **Use this version and continue** / **Give direction for one more
       user-directed pass** / **Stop here** (leave artifacts, `state clear`, stop).
@@ -193,7 +242,8 @@ sharing the same `NN`.
         confirmation reveals the plan diverges from user intent, route the consolidated correction
         back into the re-review loop (step 5b planner revision — the writer allows the
         `post-interview → revision` edge for this correction path) and re-run architect + critic
-        before returning here. Cap at the same 5-iteration ceiling.
+        before returning here. Cap at the same tier-based iteration ceiling (5 for `full`, 2 for
+        `lite`).
       - If the plan is crystal clear (no open assumptions or prior-context conflicts), skip straight
         to the step 8 final-options question — do not invent filler questions.
       - For every confirmed open item, embed the resolved outcome into the final plan under an

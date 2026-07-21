@@ -324,6 +324,20 @@ A goal cannot be checkpointed `complete` until this gate has run, in order:
      design-sourced goals, and `waived` (Major only — a Critical is never waivable — requiring
      `user_acknowledged: true`, which the leader may set only after using AskUserQuestion to surface
      the specific Major to the user and getting explicit approval; the agent may never self-waive).
+   - **Mechanical `qa.design.visual` gate (pixel diff, not a self-attested checkbox).** For a
+     design-sourced UI goal, the completion gate now REQUIRES the mechanical `design visual` result —
+     one `qa.design.visual[]` entry per declared surface, produced by running
+     `cat-state.mjs design visual --figma <TO-BE export> --impl <AS-IS screenshot>` on the two saved PNGs
+     (`references/design-qa.md`'s "Mechanical visual enforcement" section) — not the old self-attested
+     side-by-side checkbox alone. The CLI decodes both PNGs (PNG-only; JPEG is rejected even though
+     `qa.artifacts` otherwise accepts it), classifies into `None`/`Major`/`Blocking`, and the checkpoint
+     recomputes both the diff ratios and the severity from the actual files (recompute-authoritative,
+     same as the numeric rows). `Major` is waivable exactly like numeric Major (same `qa.design.waived`).
+     `Blocking` is decided from the RAW ratio ALONE (before `exclude_regions`) and is NEVER waivable,
+     exactly like a numeric Critical — `exclude_regions` (bounded, at most 15% of the frame) can only ever
+     move a surface between `Major` and `None`, and can NEVER pull a `Blocking` surface down to `Major` or
+     `None` at any configured threshold, including a project-lowered `.cat/settings.json`
+     `designQa.visualDiffBlockThreshold` override.
    - CLI: the actual passed command invocations with captured output, re-runnable as stated.
    - API/package/algorithm: a test-report artifact file or the passed test commands covering
      boundary/adversarial cases.
@@ -341,7 +355,10 @@ A goal cannot be checkpointed `complete` until this gate has run, in order:
    present and empty; and `qa.design` (when required by the design-source trigger above) mechanically
    validated — no unresolved Critical/Major, and any `waived`/`not_applicable` hatch properly
    ceremonied (user-acknowledged Major-only waiver surfaced to the user first, or architect-acked
-   not_applicable with no screenshot). `COMMENT`, `WATCH`, `REQUEST CHANGES`, `BLOCK`, missing evidence,
+   not_applicable with no screenshot); AND `qa.design.visual[]` (one mechanical `design visual` result
+   per declared surface, not a self-attested checkbox) mechanically validated — no surface computes
+   `Blocking` (never waivable), and any `Major` properly covered by the same user-acknowledged
+   `qa.design.waived`. `COMMENT`, `WATCH`, `REQUEST CHANGES`, `BLOCK`, missing evidence,
    plan/code mismatches, or non-empty blockers are non-clean.
 9. **On any finding**: do NOT checkpoint `complete`. Record review blockers (see blocker goals
    above), resolve them, then rerun the full gate from step 1. Repeat until all lanes are clean.

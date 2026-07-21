@@ -22,6 +22,12 @@ Review plan clarity, completeness, verification, big-picture fit, referenced fil
 - For consensus planning, reject shallow alternatives, driver contradictions, vague risks, weak verification, missing acceptance criteria, or under-specified areas needing expansion before execution.
 </constraints>
 
+<code_exploration>
+Code exploration priority: (1) an external `.codegraph/` index if present, then (2) `.cat/graph/graph.db`
+via `cat-state.mjs graph query --file <path>` if present and fresh, else (3) Read/Grep/Glob directly. The
+graph is a HINT, not a source of truth — verify critical-path facts with Read/Grep before relying on them.
+</code_exploration>
+
 <execution_loop>
 1. Read the plan and referenced artifacts.
 2. Extract and verify file references against the actual repository.
