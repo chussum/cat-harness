@@ -174,6 +174,77 @@ test("regression: a REAL output redirect to a non-.cat path is STILL denied duri
   assert.match(parsed.hookSpecificOutput.permissionDecisionReason, /planning phase boundary/i);
 });
 
+// Regression: the phase-boundary Bash guard must NOT misread `>=` (the comparison
+// operator, e.g. "Node >= 22" in prose) as an output redirect, and must NOT scan
+// heredoc BODY prose (markdown blockquotes `> …`, `>=`, `-> `) as shell commands —
+// those bodies are literal data of legitimate ralplan/ultragoal artifact writes and
+// were being DENIED (cousin of the =>/-> arrow false-positive fixed earlier).
+test("regression: `>=`/`<=` comparison operators are NOT misread as a redirect and NOT denied during a blocking ralplan phase", () => {
+  const { project, sid } = seedBlockingRalplan();
+  for (const command of [
+    `echo "requires Node >= 22.13.0 or newer"`, // >= comparison operator
+    `echo "cap is <= 5 and full >= lite"`, // <= and >= mid-sentence
+  ]) {
+    const result = bashPretool(project, sid, command);
+    assert.equal(result.status, 0, `hook must exit 0 for: ${JSON.stringify(command)}`);
+    assert.equal(
+      result.stdout.trim(),
+      "",
+      `>=-only command must NOT be denied (no permissionDecision) for: ${JSON.stringify(command)}`,
+    );
+  }
+});
+
+test("regression: prose (blockquotes, `>=`, arrows) in a quoted heredoc BODY is NOT misread as a mutation and NOT denied during a blocking ralplan phase", () => {
+  const { project, sid } = seedBlockingRalplan();
+  // A heredoc body full of exactly the tokens that used to trip the guard.
+  const command = [
+    `cat <<'DOC'`,
+    `Requires Node >= 22.13.0 or newer.`,
+    `> a markdown blockquote line`,
+    `>   an indented blockquote`,
+    `flow: planner -> critic -> consensus and a=>b`,
+    `quality > quantity when A > B`,
+    `DOC`,
+  ].join("\n");
+  const result = bashPretool(project, sid, command);
+  assert.equal(result.status, 0, `hook must exit 0 for a prose heredoc body`);
+  assert.equal(
+    result.stdout.trim(),
+    "",
+    `a quoted heredoc whose body is markdown prose must NOT be denied: ${JSON.stringify(command)}`,
+  );
+});
+
+test("regression: a real truncate redirect after a `;` separator is STILL denied during a blocking ralplan phase", () => {
+  const { project, sid } = seedBlockingRalplan();
+  const outside = path.join(os.tmpdir(), "cat-hook-truncate-regression.txt");
+  const result = bashPretool(project, sid, `echo hi ; > ${outside}`);
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.hookSpecificOutput.permissionDecision, "deny", "a real `; > file` truncate must still be caught as a mutation");
+});
+
+test("regression: a REAL redirect on a heredoc OPENER line is STILL denied during a blocking ralplan phase", () => {
+  const { project, sid } = seedBlockingRalplan();
+  const outside = path.join(os.tmpdir(), "cat-hook-heredoc-opener-redirect.txt");
+  const command = [`cat <<'DOC' > ${outside}`, `body line`, `DOC`].join("\n");
+  const result = bashPretool(project, sid, command);
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.hookSpecificOutput.permissionDecision, "deny", "a redirect on the heredoc opener line must still be caught");
+});
+
+test("security: a `.cat/` state mutation inside a heredoc BODY is STILL denied even when idle (G1 protection is not weakened by heredoc stripping)", () => {
+  const project = mkTmpProject({ withCat: true }); // no active workflow → idle
+  const sid = "idlesid";
+  const command = [`bash <<'RUN'`, `rm -rf .cat/_session-${sid}/state`, `RUN`].join("\n");
+  const result = bashPretool(project, sid, command);
+  assert.equal(result.status, 0);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.hookSpecificOutput.permissionDecision, "deny", "a `.cat/` mutation in a heredoc body must still be caught (G1, even when idle)");
+});
+
 test("regression: stop with no state dir is a silent no-op regardless of CAT_HARNESS_HOME", () => {
   const projectWithCat = mkTmpProject({ withCat: true });
   const home = mkTmpHome();

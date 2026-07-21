@@ -89,14 +89,18 @@ const SIGNAL_DETECTORS = [
 // skill-state/deep-interview-mutation-guard.ts, plus git apply|patch per
 // DESIGN.md §5).
 // ---------------------------------------------------------------------------
-// The redirect alternative's leading char class excludes `=` and `-` so the
-// ASCII arrow operators `=>` and `->` (JS arrow functions, ASCII arrows in
-// heredoc/echo text, `a->b` prose) are NOT misread as an output redirect to a
-// file named by whatever follows the `>`. A real redirect `>` is never
-// immediately preceded by `=`/`-` (those only form the `=>`/`->` operators);
-// `x>file`, ` >file`, `2>file` etc. are all still caught.
+// The redirect alternative uses a leading negative lookbehind plus a target guard
+// so shell-neutral operators are not misread as an output redirect to a phantom
+// file (these bit real ralplan/ultragoal writes):
+//  - `(?<![<>=-])`      : a real `>` redirect is never immediately preceded by
+//    `<`/`>`/`=`/`-`, so the ASCII arrows `=>` `->`, `<>`, and `>>` internals skip.
+//  - target `[^\s;&|=]…` : the redirect target cannot start with `=`, so the
+//    comparison operator `>=` (e.g. "Node >= 22" prose) is not read as a redirect.
+// Markdown blockquotes and other prose `>` live in heredoc BODIES, which are removed
+// by stripHeredocBodies() before segment scanning — so they never reach this regex.
+// `x>file`, ` >file`, `2>file`, `cmd >> f`, `; > f` are all still caught.
 const BASH_MUTATION_COMMAND_RE =
-  /(?:^|[;&|\n])\s*(?:\w+=[^\s]+\s+)*(?:sudo\s+)?(?:tee|touch|rm|mkdir|cp|mv|install|truncate)\b([^;&|\n]*)|(?:^|[^<>=-])(?:>>?|\d>>?)\s*([^\s;&|]+)/gi;
+  /(?:^|[;&|\n])\s*(?:\w+=[^\s]+\s+)*(?:sudo\s+)?(?:tee|touch|rm|mkdir|cp|mv|install|truncate)\b([^;&|\n]*)|(?<![<>=-])(?:>>?|\d>>?)\s*([^\s;&|=][^\s;&|]*)/gi;
 const BASH_IN_PLACE_MUTATION_COMMAND_RE =
   /(?:^|[;&|\n])\s*(?:\w+=[^\s]+\s+)*(?:sudo\s+)?(?:sed|perl)\b([^;&|\n]*)/gi;
 const BASH_OPAQUE_INTERPRETER_WRITE_RE =
@@ -400,6 +404,41 @@ function stripShellComments(command) {
 /** Split a comment-stripped command on && ; | || & and newlines (D2). */
 function splitShellSegments(strippedCommand) {
   return strippedCommand.split(/[;&|\n]+/);
+}
+
+/**
+ * Remove heredoc BODY content — the data lines between a `<<DELIM` opener line and
+ * its closing `DELIM` line — so shell-neutral prose in the body (markdown
+ * blockquotes, `>=`, `a -> b`, `A > B`) is never split into fake command segments
+ * and misread as redirects/mutations. The opener line is preserved, so a real
+ * redirect on it (`cat <<X > file`) is still scanned. Bodies remain in the
+ * un-stripped command that the caller separately runs the interpreter-heredoc-write
+ * (D3) and G1 `.cat/`-target checks against, so those protections are unaffected.
+ * `<<-` strips leading tabs before matching the closer; multiple heredocs stacked on
+ * one line close in opener order (bash semantics).
+ */
+function stripHeredocBodies(command) {
+  const lines = command.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    out.push(line);
+    i++;
+    const openers = [...line.matchAll(/<<(-?)\s*(["']?)([A-Za-z_]\w*)\2/g)].map(m => ({
+      delim: m[3],
+      dash: m[1] === "-",
+    }));
+    for (const opener of openers) {
+      while (i < lines.length) {
+        const body = lines[i];
+        const candidate = opener.dash ? body.replace(/^\t+/, "") : body;
+        i++;
+        if (candidate === opener.delim) break; // closer consumed; body + closer dropped
+      }
+    }
+  }
+  return out.join("\n");
 }
 
 /** targets.paths = [{path, destructive}] — destructive ops (rm/mv) can take out directories. */
@@ -1114,11 +1153,16 @@ function runPretool(input) {
   if (toolName === "Bash") {
     const command = String(toolInput.command ?? "");
     const stripped = stripShellComments(command);
+    // Heredoc bodies are literal DATA, not shell — remove them before splitting so
+    // markdown prose (`>=`, `-> `, blockquotes) in a `<<'DELIM'` body cannot be
+    // misread as redirects/mutations. G1 (.cat) and interpreter-write (D3) checks
+    // below still run on the un-stripped command, so those protections are intact.
+    const shellStructure = stripHeredocBodies(stripped);
     // D2: strip comments, split on separators; a segment is sanctioned iff it is
     // an anchored `node …cat-state.mjs` invocation with no mutation targets of
     // its own. Every other segment is evaluated by the normal target rules.
     const evaluated = [];
-    for (const segment of splitShellSegments(stripped)) {
+    for (const segment of splitShellSegments(shellStructure)) {
       if (!segment.trim()) continue;
       const segmentTargets = extractBashTargets(segment);
       if (
@@ -1131,13 +1175,15 @@ function runPretool(input) {
       evaluated.push({ segment, targets: segmentTargets });
     }
 
-    // G1 protection applies even with no active workflow.
-    for (const { targets } of evaluated) {
-      for (const target of targets.paths) {
-        const segments = catSegments(cwd, target.path);
-        if (segments && isG1Protected(segments, target.destructive)) {
-          denyPretool(dir, G1_DENY_REASON, { tool: "Bash", kind: "g1-state-target", target: target.path });
-        }
+    // G1 protection applies even with no active workflow. Scan the FULL un-stripped
+    // command (heredoc bodies included) for `.cat/` mutation targets: a body that
+    // writes into `.cat/` (e.g. `bash <<X; rm .cat/state; X`) is a real mutation
+    // regardless of heredoc quoting, and prose targets never resolve inside `.cat/`,
+    // so scanning the body here protects G1 without any prose false-positive.
+    for (const target of extractBashTargets(stripped).paths) {
+      const segments = catSegments(cwd, target.path);
+      if (segments && isG1Protected(segments, target.destructive)) {
+        denyPretool(dir, G1_DENY_REASON, { tool: "Bash", kind: "g1-state-target", target: target.path });
       }
     }
     // D3: interpreter/heredoc write commands that lexically mention ".cat/" are
