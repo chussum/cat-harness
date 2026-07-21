@@ -161,6 +161,43 @@ For each goal, first `pending` (or first `failed` when retrying):
    `goal checkpoint --goal GNNN --status failed` (or `blocked`). Never leave a status change
    without a ledger event. Retry failed goals after their blocker work resolves.
 
+### Code-graph blast-radius (executor-only, best-effort — never for architect)
+
+At the FIRST executor spawn of this run, run one full `graph build` (no `--changed-only`) —
+best-effort, non-blocking:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/cat-state.mjs" graph build --session <sid>
+```
+
+Treat a non-zero exit, `EXIT_USAGE` (Node < 22.13), or `{ok:false, skipped:"locked"}` as a silent,
+non-blocking fallback — never block the goal loop on this. At every subsequent goal-loop iteration
+within the SAME run (each later executor spawn), run `graph build --changed-only` instead (cheap;
+the generation already advanced from the run-start full build).
+
+When a goal names specific file paths (cap 3), run `graph query --file <path> --depth 2 --session
+<sid>` per file. When `ok:true` and `callers` is non-empty, splice the pinned-format block below
+into the **executor** dispatch prompt ONLY — never into the architect dispatch (the "Architect
+review" step below carries its own explicit negative instruction; DESIGN.md §6
+reviewer-independence invariant):
+
+```
+[blast-radius HINT — not source of truth{, possibly stale — incremental build; verify with Read/Grep}]
+<file>: <N nodes>
+  related: <symbol> (<kind>) — <file>, distance <N>
+  ... (top ~8 entries by distance, one list — callers/dependents are the same
+      underlying array in the current data model, do not render as two
+      duplicate-content sections)
+```
+
+Fields per entry are exactly what `graph query` returns for `callers`/`dependents`: `symbol`,
+`kind`, `file`, `distance` — never `line`. Size bound: top ~8 entries by distance, ≤800 bytes total
+per file queried, ≤3 files per goal. Prepend `(possibly stale — incremental build; verify with
+Read/Grep)` to the block's header line whenever the queried file's `graph query` response has
+`incremental_since_full_build:true` OR `stale:true`. When the graph is absent, Node is below 22.13,
+or the query returns empty, inject nothing — silent fallback to the executor's own Read/Grep/Glob
+guidance (`agents/executor.md`).
+
 ### Mandatory implementation delegation on big scope
 
 When a goal's implementation scope is **big enough**, you MUST delegate implementation to one or
@@ -282,7 +319,11 @@ A goal cannot be checkpointed `complete` until this gate has run, in order:
    carry the report through `iteration.evidence`; never add a new top-level gate key, never write
    advisory findings to the ledger.
 3. **Rerun verification** after the cleaner pass so reviewed evidence covers the cleaned code.
-4. **Architect review** — delegate `architect` (Agent tool, `subagent_type: cat-harness:architect`) covering
+4. **Architect review** — **do NOT inject any `[blast-radius HINT]` block into the architect
+   dispatch prompt below — the architect must independently form its own map via Read/Grep/Glob
+   (`agents/architect.md` §"Code exploration priority"). Sharing an automated map here would
+   correlate the review with the executor's own view, eroding the fresh-eyes review this gate
+   depends on.** Delegate `architect` (Agent tool, `subagent_type: cat-harness:architect`) covering
    all three lanes: architecture-side (system boundaries, layering, data/control flow,
    operational risks); product-side (user-visible behavior, acceptance criteria, edge cases,
    regressions); code-side (maintainability, tests, integration points, unsafe shortcuts).

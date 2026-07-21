@@ -246,6 +246,18 @@ generation counter in the `meta` table (`last_build_mode`,
 possibly stale even when `stale` is `false`, without paying for the
 expensive full inbound-edge recompute on every query.
 
+**Empty-DB first-build false positive**: `last_build_mode` is set from the `--changed-only` flag
+alone, not from whether the DB was actually empty beforehand — so calling `graph build
+--changed-only` as the very FIRST build ever (a cold-start empty DB) still sets
+`incremental_since_full_build:true` on the following `graph query`, even though every file was
+freshly parsed from empty and no dangling cross-file edge is even possible yet
+(`scripts/cat-state.test.mjs`, the empty-DB fixture mirroring the rename-staleness fixture above).
+This is why `graph build`/`graph query` are ALSO invoked automatically by the orchestrator skills
+(`skills/{ralplan,ultragoal,team}/SKILL.md`, planner/executor dispatch only — see §6 Code-graph
+automation): one full `graph build` (no `--changed-only`) at run-start sidesteps the false positive
+entirely, with `--changed-only` used only at later phase-starts within the same run once a full
+build has already established a clean `full_build_generation`.
+
 Completion receipt v2 (field name `plan_generation_sha256` kept for continuity): at
 `goal checkpoint --status complete`, AFTER the goal row is mutated (status, `completed_at`,
 `updated_at = verified_at`), the CLI computes
@@ -312,6 +324,7 @@ state_root: .cat/_session-{sid} | helper: node "{PLUGIN_ROOT}/scripts/cat-state.
 active: none | "{skill} phase={phase} ambiguity={a}/{t} next={hud.nextAction}"   ← stickiness: re-inject EVERY prompt while a run is live
 [keyword: {skill} explicitly requested — invoke skill cat-harness:{skill} now]   ← only when keyword matched
 [signals: file-path, code-fence, issue-ref | vagueness-cues: "not sure", scope-risk: "migration"]  ← advisory regex hints
+[graph: last built 3m ago (.cat/graph/graph.db) — HINT only, verify with Read/Grep]  ← only when a file-path/symbol signal fired
 Routing ladder — apply BEFORE acting; choose the smallest sufficient workflow:
 1. Pure question / discussion / trivial reversible op → answer directly, no gating.
 2. Implementation-shaped request with ambiguous intent, scope, or acceptance criteria → invoke cat-harness:deep-interview.
@@ -335,6 +348,19 @@ Advisory regex hints (never route on their own): vagueness cues `/not sure|uncle
 scope-risk `/migration|security|breaking change|data loss|마이그레이션|보안/i`;
 auto-pass signals = file paths, `#\d+` issue refs, camelCase/snake_case symbols, numbered lists,
 code fences, error/stack traces (their presence suggests ladder 1/3/4 over 2).
+
+**Graph advisory line** (`graphAdvisoryLine`, gated on a `file-path`/`symbol` signal firing): informs
+the MAIN thread only whether `.cat/graph/graph.db` exists / how fresh it is — it makes no claim
+about, and has no effect on, what an Agent-tool-spawned subagent receives (see §6 Code-graph
+automation for that contract). `fs.statSync` ONLY: never opens the DB (no `node:sqlite` import),
+never spawns a build, own isolated try/catch (a failure drops only this line, never the router).
+Node-floor-aware, duplicating the `[22,13,0]` floor locally rather than importing `cat-state.mjs`:
+below floor → `[graph: needs Node 22.13+ (have {version}) — code exploration falls back to
+Read/Grep]`; `.cat/graph/graph.db` absent (`ENOENT`) → `[graph: not built yet —
+cat-harness:ralplan/ultragoal/team auto-refresh it at workflow start; Read/Grep until then]`;
+present → `[graph: last built {age} ago (.cat/graph/graph.db) — HINT only, verify with Read/Grep]`;
+any other stat error (inaccessible/corrupt path) → the line is omitted entirely, rest of the router
+block intact.
 
 ### `pretool` (PreToolUse, matcher `Edit|MultiEdit|Write|NotebookEdit|Bash|Skill|Agent|Task`)
 Read active states. Blocking phases: deep-interview `interviewing`; ralplan `planner|review|revision|post-interview|adr|final`;
@@ -519,6 +545,73 @@ show the working remediation invocation (the exact deactivation `state write` co
 - Shutdown phase formula: all tasks evidence-complete → `complete`; work merged but integration pending →
   `awaiting_integration`; any failed/blocked or missing evidence → `failed`; work remaining → `cancelled`.
 
+### Code-graph automation (ralplan/ultragoal/team, planner/executor-only injection)
+
+Each orchestrator skill (`ralplan`, `ultragoal`, `team`) drives `graph build`/`graph query` itself —
+nothing here changes `scripts/cat-state.mjs`'s CLI contract, only who calls it and when:
+
+- **Trigger**: ONE full `graph build` (no `--changed-only`) at the FIRST planner/executor spawn of a
+  run; `graph build --changed-only` at every subsequent phase-start within the SAME run (ralplan
+  step 5b revision, ultragoal's later goal-loop iterations, team's rare targeted re-spawn). Always
+  best-effort and non-blocking: a non-zero exit, `EXIT_USAGE` (Node < 22.13), or `{ok:false,
+  skipped:"locked"}` is a silent fallback — the workflow proceeds exactly as it did before this
+  automation existed. This is a prompt-level cadence (SKILL.md prose, not code-enforced); a redundant
+  `graph build` call is cheap and harmless, never broken, so the "at most once per run" contract has
+  no automated test oracle beyond CLI idempotency.
+- **Injection**: when a task/goal/lane names specific file paths (cap 3, or ≤3 per lane for team),
+  `graph query --file <path> --depth 2` results are spliced into the dispatch prompt as a
+  `[blast-radius HINT]` block — **planner dispatch (ralplan) and executor dispatch (ultragoal, team)
+  ONLY.** Pinned render format, identical across all three SKILL.md files:
+
+  ```
+  [blast-radius HINT — not source of truth{, possibly stale — incremental build; verify with Read/Grep}]
+  <file>: <N nodes>
+    related: <symbol> (<kind>) — <file>, distance <N>
+    ... (top ~8 entries by distance, one list — callers/dependents are the same
+        underlying array in the current data model, do not render as two
+        duplicate-content sections)
+  ```
+
+  Fields are exactly what `graph query` returns for `callers`/`dependents`: `symbol`, `kind`,
+  `file`, `distance` — never `line` (the API returns no line number for caller/dependent entries,
+  only for the queried file's own `nodes[]`). Size bound: top ~8 entries by distance, ≤800 bytes per
+  file queried, ≤3 files per task/goal (≤3 per lane for team). The header line is prefixed with
+  `(possibly stale — incremental build; verify with Read/Grep)` whenever the queried file's `graph
+  query` response has `incremental_since_full_build:true` OR `stale:true`. When the graph is absent,
+  Node is below floor, or the query returns empty, nothing is injected — silent fallback to the
+  agent's own Read/Grep/Glob guidance (`agents/planner.md`, `agents/executor.md`).
+
+- **Reviewer-independence invariant** (named; non-negotiable): automated context — persistent agent
+  memory OR an injected blast-radius map — feeds authoring lanes (planner, executor) only, NEVER
+  reviewing lanes (architect, critic). This is the same rule already applied to `memory: local` in
+  `agents/planner.md`/`agents/executor.md` (commit `1e90b55`, kept OFF `agents/architect.md`/
+  `agents/critic.md` deliberately, to keep the consensus gate's fresh-eyes review). A shared or
+  possibly-stale automated map handed to both reviewers would correlate their judgment and erode the
+  independence the ralplan join gate (Critic `OKAY` AND Architect `CLEAR`+`APPROVE`) depends on.
+  Enforced only at the prompt level: an explicit negative instruction sits immediately above every
+  architect/critic (or ultragoal's "Architect review") spawn block in all three SKILL.md files —
+  grep-verifiable, not code-enforced. `agents/architect.md`/`agents/critic.md` are deliberately left
+  untouched by this change (no mention of ever receiving an injected block); their existing "Code
+  exploration priority" paragraph already covers a SELF-run `graph query`, which remains the only
+  graph access either reviewer has.
+- **Subagent-reach rationale** (why the hook is not the injection point): `hooks/hooks.json`'s
+  PreToolUse matcher includes `Agent|Task`, so PreToolUse DOES fire when a subagent is spawned — but
+  a PreToolUse hook can only allow/deny/annotate the tool call, it cannot inject content into the
+  spawned subagent's separate context window or rewrite the dispatch prompt itself. The orchestrator
+  SKILL.md's own prompt composition is therefore the only mechanism able to inject the blast-radius
+  block into planner/executor context; the router's `graph` advisory line (§5) informs only the MAIN
+  thread and makes no promise about subagent behavior.
+- **v1.2.0 reconciliation**: this automation is NOT a return to the background-process pattern
+  `684b289` removed. `graph build`/`graph query` run synchronously, invoked from within an already
+  in-flight orchestrator turn — no server process, no detached/backgrounded spawn, no network
+  egress, no cross-project registry writes, and no unconditional per-prompt hook side effect (the
+  router's advisory line is `fs.statSync`-only and never triggers a build itself). A hook-triggered
+  detached background build was considered and rejected for this reason (it would re-bless the exact
+  side effect v1.2.0 shipped to eliminate) and because it cannot reach a subagent's dispatch prompt
+  by itself (see Subagent-reach rationale above).
+- **Scope**: automatic ONLY within `ralplan`/`ultragoal`/`team`. Plain main-conversation chat never
+  auto-builds or auto-injects; the router's `graph` advisory line (§5) is informational only.
+
 ## 7. Agents (`agents/*.md`, CC frontmatter: name/description/tools/model)
 
 Plugin agents register as `<plugin>:<name>` (verified against live plugin agent listings), so every
@@ -548,10 +641,14 @@ orchestrator via artifact paths (see §6), never inline dumps of plan bodies.
 - User-facing language (guaranteed via a ROUTER_LADDER line injected every prompt): questions
   (AskUserQuestion), progress updates, results, and spec/plan/findings bodies mirror the USER's
   language; state JSON (envelopes, goals.json, ledger, gate field values) stays English.
-- Question register (ROUTER_LADDER line + deep-interview/ralplan skill rules): every question to
-  the user is written in plain language for non-developers — technical terms are KEPT but glossed
-  in parentheses on first use (learning-by-exposure, e.g. 마이그레이션(기존 데이터를 새 구조로 옮기는 작업));
-  options are labeled by outcome, not mechanism. Simplify the language, never the decision.
+- User-facing register — write like a UX writer (ROUTER_LADDER line injected every prompt +
+  deep-interview/ralplan skill rules): EVERY user-facing message — progress updates, mid-workflow
+  status narration, results, AND questions (not only questions) — is written in plain language for
+  non-developers. Technical terms are KEPT but glossed in parentheses on first use
+  (learning-by-exposure, e.g. 합의(consensus, 검토관들이 같은 결론에 도달) / 마이그레이션(기존 데이터를
+  새 구조로 옮기는 작업)); internal agent-to-agent jargon is never dumped at the user unglossed. For
+  questions, options are labeled by outcome, not mechanism. Simplify the language, never the
+  decision. This governs only what the USER reads — agent/subagent PROMPT internals stay technical.
 - All JSON written by hooks/CLI: 2-space indent, trailing newline. All timestamps ISO8601 UTC.
 - Never `console.log` debug noise from hooks (stdout is the contract). Errors → stderr + audit.jsonl.
 - **Zero-install runtime, ONE deliberate dependency exception — it does not require an end-user `npm

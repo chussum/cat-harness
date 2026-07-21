@@ -630,3 +630,204 @@ test("design-source backstop: a non-design Figma URL (e.g. /about) does NOT emit
   const ctx = routerContext("check out https://www.figma.com/about and the pricing page");
   assert.ok(!ctx.includes("design-source:"), "only real file/design/proto/board paths trigger the backstop, not marketing URLs");
 });
+
+// ---------------------------------------------------------------------------
+// Graph advisory (router-only, MAIN thread): reports whether .cat/graph/
+// graph.db exists/is fresh, gated on the existing file-path/symbol signal
+// detection. fs.statSync ONLY (no node:sqlite, no spawn), own isolated
+// try/catch, Node-floor aware (< 22.13 -> fallback wording, never attempts
+// a filesystem read). See hooks/cat-hook.mjs graphAdvisoryLine/buildRouterBlock.
+// ---------------------------------------------------------------------------
+function routerContextAt(cwd, prompt, envOverrides = {}) {
+  const res = runHook("router", { cwd, session_id: "graphsid", prompt }, envOverrides);
+  assert.equal(res.status, 0, `router must always exit 0 (fail-open): ${res.stderr}`);
+  return JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
+}
+
+/**
+ * Locates a definitely-below-floor (< 22.13.0) Node binary so the "needs
+ * Node 22.13+" wording is exercised deterministically regardless of which
+ * Node runs this test suite itself (mirrors scripts/cat-state.test.mjs's
+ * findBelowFloorNode). Falls back to the current test runner's own node if
+ * THAT already happens to be below-floor (true for this repo's default
+ * Node 20).
+ */
+function findBelowFloorHookNode() {
+  const candidates = [
+    process.env.CAT_HOOK_TEST_OLD_NODE,
+    path.join(os.homedir(), ".nvm", "versions", "node", "v22.12.0", "bin", "node"),
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  const parts = process.version.replace(/^v/, "").split(".").map(n => parseInt(n, 10) || 0);
+  const atLeastFloor = parts[0] > 22 || (parts[0] === 22 && parts[1] >= 13);
+  return atLeastFloor ? null : process.execPath;
+}
+
+/**
+ * Locates a Node 22.13+ binary so the fresh/absent/stale-db advisory
+ * wordings (which require an actual fs.statSync against .cat/graph/graph.db)
+ * can be exercised deterministically. Skips gracefully when none is found —
+ * this repo's default test Node (20.15.1) is below the graph floor.
+ */
+function findAboveFloorHookNode() {
+  const candidates = [
+    process.env.CAT_HOOK_TEST_NEW_NODE,
+    path.join(os.homedir(), ".nvm", "versions", "node", "v22.22.3", "bin", "node"),
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  const parts = process.version.replace(/^v/, "").split(".").map(n => parseInt(n, 10) || 0);
+  const atLeastFloor = parts[0] > 22 || (parts[0] === 22 && parts[1] >= 13);
+  return atLeastFloor ? process.execPath : null;
+}
+
+function runHookOnNode(nodeBin, mode, input, envOverrides = {}) {
+  return spawnSync(nodeBin, [HOOK_PATH, mode], {
+    input: JSON.stringify(input),
+    env: { ...process.env, ...envOverrides },
+    encoding: "utf8",
+    timeout: 10000,
+  });
+}
+
+const belowFloorHookNode = findBelowFloorHookNode();
+const aboveFloorHookNode = findAboveFloorHookNode();
+const ABOVE_FLOOR_SKIP = aboveFloorHookNode
+  ? false
+  : "no Node 22.13+ runtime found — set CAT_HOOK_TEST_NEW_NODE to exercise fresh/absent/stale graph-advisory wording";
+const BELOW_FLOOR_SKIP = belowFloorHookNode
+  ? false
+  : "no below-floor (<22.13.0) Node runtime found — set CAT_HOOK_TEST_OLD_NODE to exercise the graph-floor wording";
+
+test("graph advisory: signal-gated — appears only when the prompt carries a file-path/symbol signal", () => {
+  const project = mkTmpProject();
+  const withFilePath = routerContextAt(project, "please refactor src/foo.ts");
+  const withSymbol = routerContextAt(project, "why does getUserProfile behave like that");
+  const withoutSignal = routerContextAt(project, "what do you think about testing in general");
+  assert.match(withFilePath, /\[graph: /, "a file-path signal must trigger the graph advisory line");
+  assert.match(withSymbol, /\[graph: /, "a symbol signal must trigger the graph advisory line");
+  assert.ok(!/\[graph: /.test(withoutSignal), "no code-shaped signal -> no graph advisory line");
+});
+
+test(
+  "graph advisory: below-floor Node reports the Node-floor wording and never touches the filesystem",
+  { skip: BELOW_FLOOR_SKIP },
+  () => {
+    const project = mkTmpProject(); // no .cat/graph at all — must not matter below floor
+    const res = runHookOnNode(belowFloorHookNode, "router", { cwd: project, session_id: "graphsid", prompt: "refactor src/foo.ts" });
+    assert.equal(res.status, 0, res.stderr);
+    const ctx = JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /\[graph: needs Node 22\.13\+ \(have \d+\.\d+\.\d+\) — code exploration falls back to Read\/Grep\]/);
+  },
+);
+
+test(
+  "graph advisory: absent .cat/graph/graph.db reports the 'not built yet' wording",
+  { skip: ABOVE_FLOOR_SKIP },
+  () => {
+    const project = mkTmpProject();
+    const res = runHookOnNode(aboveFloorHookNode, "router", { cwd: project, session_id: "graphsid", prompt: "refactor src/foo.ts" });
+    assert.equal(res.status, 0, res.stderr);
+    const ctx = JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
+    assert.match(
+      ctx,
+      /\[graph: not built yet — cat-harness:ralplan\/ultragoal\/team auto-refresh it at workflow start; Read\/Grep until then\]/,
+    );
+  },
+);
+
+test(
+  "graph advisory: a fresh .cat/graph/graph.db reports the 'last built {age} ago' wording",
+  { skip: ABOVE_FLOOR_SKIP },
+  () => {
+    const project = mkTmpProject();
+    const graphDir = path.join(project, ".cat", "graph");
+    fs.mkdirSync(graphDir, { recursive: true });
+    fs.writeFileSync(path.join(graphDir, "graph.db"), "not-a-real-sqlite-file"); // statSync only — content never opened
+    const res = runHookOnNode(aboveFloorHookNode, "router", { cwd: project, session_id: "graphsid", prompt: "refactor src/foo.ts" });
+    assert.equal(res.status, 0, res.stderr);
+    const ctx = JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /\[graph: last built \d+s ago \(\.cat\/graph\/graph\.db\) — HINT only, verify with Read\/Grep\]/);
+  },
+);
+
+test(
+  "graph advisory: an older .cat/graph/graph.db reports a coarser age unit (days)",
+  { skip: ABOVE_FLOOR_SKIP },
+  () => {
+    const project = mkTmpProject();
+    const graphDir = path.join(project, ".cat", "graph");
+    fs.mkdirSync(graphDir, { recursive: true });
+    const dbFile = path.join(graphDir, "graph.db");
+    fs.writeFileSync(dbFile, "not-a-real-sqlite-file");
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(dbFile, twoDaysAgo, twoDaysAgo);
+    const res = runHookOnNode(aboveFloorHookNode, "router", { cwd: project, session_id: "graphsid", prompt: "refactor src/foo.ts" });
+    assert.equal(res.status, 0, res.stderr);
+    const ctx = JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /\[graph: last built 2d ago \(\.cat\/graph\/graph\.db\) — HINT only, verify with Read\/Grep\]/);
+  },
+);
+
+test(
+  "graph advisory: an inaccessible .cat/graph directory degrades by omitting only the graph line — rest of block intact, router never throws",
+  { skip: ABOVE_FLOOR_SKIP || process.platform === "win32" },
+  () => {
+    const project = mkTmpProject();
+    const graphDir = path.join(project, ".cat", "graph");
+    fs.mkdirSync(graphDir, { recursive: true });
+    fs.writeFileSync(path.join(graphDir, "graph.db"), "not-a-real-sqlite-file");
+    fs.chmodSync(graphDir, 0o000); // statSync on graph.db now fails (EACCES traversing graphDir)
+    try {
+      const res = runHookOnNode(aboveFloorHookNode, "router", { cwd: project, session_id: "graphsid", prompt: "refactor src/foo.ts" });
+      assert.equal(res.status, 0, res.stderr);
+      const parsed = JSON.parse(res.stdout);
+      const ctx = parsed.hookSpecificOutput.additionalContext;
+      assert.ok(!/\[graph: /.test(ctx), "an inaccessible graph.db must omit the advisory line, not crash the router");
+      assert.match(ctx, /<cat-harness-router>/, "the rest of the router block must stay intact");
+      assert.match(ctx, /<\/cat-harness-router>/);
+    } finally {
+      fs.chmodSync(graphDir, 0o755); // restore so tmp cleanup / re-runs are not blocked
+    }
+  },
+);
+
+test("graph advisory: byte budget — the router block (incl. graph line) never exceeds the 4096-byte trim bound", { skip: ABOVE_FLOOR_SKIP }, () => {
+  const project = mkTmpProject();
+  const graphDir = path.join(project, ".cat", "graph");
+  fs.mkdirSync(graphDir, { recursive: true });
+  fs.writeFileSync(path.join(graphDir, "graph.db"), "not-a-real-sqlite-file");
+  const res = runHookOnNode(aboveFloorHookNode, "router", { cwd: project, session_id: "graphsid", prompt: "refactor src/foo.ts and also src/bar.ts" });
+  assert.equal(res.status, 0, res.stderr);
+  const ctx = JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
+  assert.ok(Buffer.byteLength(ctx, "utf8") <= 4096, `router block exceeded 4096 bytes: ${Buffer.byteLength(ctx, "utf8")}`);
+});
+
+test(
+  "graph advisory: negligible added latency — repeated full router invocations with a graph-triggering prompt stay well under a generous ceiling; no node:sqlite import, no spawn observed",
+  () => {
+    // cat-hook.mjs is spawn-only by design (main() runs unconditionally at
+    // module load and blocks on stdin — see file header docstring), so
+    // there is no import-safe surface to microbenchmark the advisory
+    // function in isolation. This measures the FULL child-process router
+    // invocation (Node startup + module load + advisory computation) as a
+    // proxy: a regression that opened node:sqlite or spawned a build would
+    // blow well past this bound, while the advisory's own statSync-only
+    // cost is negligible relative to Node process startup itself.
+    const project = mkTmpProject();
+    const N = 20;
+    const durations = [];
+    for (let i = 0; i < N; i++) {
+      const start = Date.now();
+      const res = runHook("router", { cwd: project, session_id: "latsid", prompt: "refactor src/foo.ts" });
+      durations.push(Date.now() - start);
+      assert.equal(res.status, 0);
+    }
+    durations.sort((a, b) => a - b);
+    const p95 = durations[Math.floor(durations.length * 0.95)];
+    assert.ok(p95 < 2000, `p95 full-process router latency ${p95}ms exceeded the 2000ms regression-guard bound`);
+  },
+);

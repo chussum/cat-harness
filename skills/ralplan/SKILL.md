@@ -139,11 +139,50 @@ and a ≤10-line summary — NEVER paste a persisted plan body back into the con
 Pass counter `N` starts at 1. A pass = one planner artifact + its architect and critic reviews, all
 sharing the same `NN`.
 
+## Code-graph blast-radius (planner-only, best-effort — never for architect/critic)
+
+Before the FIRST planner spawn of this run (step 1's initial pass), run one full `graph build` (no
+`--changed-only`) — best-effort, non-blocking:
+
+```
+node <cat-state path> graph build --session <sid>
+```
+
+Treat a non-zero exit, `EXIT_USAGE` (Node < 22.13), or `{ok:false, skipped:"locked"}` as a silent,
+non-blocking fallback — never block the planner turn on this. At step 5b (each subsequent planner
+re-spawn within the SAME run — a revision pass), run `graph build --changed-only` instead (cheap;
+the generation already advanced from the run-start full build).
+
+If the task or an incoming deep-interview spec names specific file paths (cap 3), run
+`graph query --file <path> --depth 2 --session <sid>` per file. When `ok:true` and `callers` is
+non-empty, splice the pinned-format block below into the **planner** dispatch prompt at step 1 and
+step 5b **ONLY** — this block is NEVER spliced into the architect or critic dispatch prompt (step
+3's explicit negative instruction below; DESIGN.md §6 reviewer-independence invariant):
+
+```
+[blast-radius HINT — not source of truth{, possibly stale — incremental build; verify with Read/Grep}]
+<file>: <N nodes>
+  related: <symbol> (<kind>) — <file>, distance <N>
+  ... (top ~8 entries by distance, one list — callers/dependents are the same
+      underlying array in the current data model, do not render as two
+      duplicate-content sections)
+```
+
+Fields per entry are exactly what `graph query` returns for `callers`/`dependents`: `symbol`,
+`kind`, `file`, `distance` — never `line` (the API does not return a line number for caller/dependent
+entries, only for the queried file's own `nodes[]`). Size bound: top ~8 entries by distance, ≤800
+bytes total per file queried, ≤3 files per task. Prepend `(possibly stale — incremental build;
+verify with Read/Grep)` to the block's header line whenever the queried file's `graph query`
+response has `incremental_since_full_build:true` OR `stale:true`. When the graph is absent, Node is
+below 22.13, or the query returns empty, inject nothing — silent fallback to the planner's own
+Read/Grep/Glob guidance (`agents/planner.md`).
+
 ## Consensus workflow
 
 1. **Planner draft** (phase `planner`). Spawn the `planner` agent (Agent tool,
    `subagent_type: cat-harness:planner`) ONCE with: the task (and deep-interview spec path if any),
-   deliberation mode, resolved cat-state path + `<sid>` + `<run_id>`, and the instruction to persist
+   deliberation mode, resolved cat-state path + `<sid>` + `<run_id>`, the `[blast-radius HINT]`
+   block when applicable (Code-graph blast-radius section above), and the instruction to persist
    its plan via `artifact write --stage 01-planner --file -` and return ONLY the receipt plus a
    ≤10-line summary. The plan MUST open with a compact **RALPLAN-DR summary**:
    - Principles (3–5)
@@ -167,7 +206,11 @@ sharing the same `NN`.
    review / Request changes / Skip review). "Request changes" → treat the answer as consolidated
    feedback and go to step 5b (the writer allows the `planner → revision` edge for exactly this
    path). Otherwise proceed automatically.
-3. **Review fan-out** (phase `review` — `state write` the transition, then spawn). Launch a fresh
+3. **Review fan-out** (phase `review` — `state write` the transition, then spawn). **Do NOT inject
+   any `[blast-radius HINT]` block into the architect or critic dispatch prompt below — they must
+   independently form their own map via Read/Grep/Glob (`agents/architect.md`/`agents/critic.md`
+   §"Code exploration priority"). Sharing an automated map here would correlate two reviews the
+   consensus gate (step 4) depends on staying independent.** Launch a fresh
    `architect` (`subagent_type: cat-harness:architect`) and a fresh `critic`
    (`subagent_type: cat-harness:critic`) **in PARALLEL — both Agent calls in the same message** —
    against the SAME immutable planner artifact, identified by the receipt triple
@@ -208,11 +251,13 @@ sharing the same `NN`.
    run the same full closed loop:
    a. Collect architect + critic feedback (read the two persisted review artifacts from disk;
       consolidate findings and required changes into one compact feedback block).
-   b. `state write` phase `revision`, increment `N`, then **fresh-spawn** a new `planner` agent with:
-      the PRIOR plan artifact path, the consolidated feedback, mode, and writer coordinates.
-      (Claude Code subagents are not resumable; fresh-spawn with prior-artifact-path + feedback is
-      gajae-code's own sanctioned fallback path.) It persists via
-      `artifact write --stage <NN>-revision --file -` and returns receipt-only.
+   b. `state write` phase `revision`, increment `N`, run `graph build --changed-only` (Code-graph
+      blast-radius section above), then **fresh-spawn** a new `planner` agent with: the PRIOR plan
+      artifact path, the consolidated feedback, mode, writer coordinates, and the `[blast-radius
+      HINT]` block when applicable — PLANNER dispatch only, same rule as step 1. (Claude Code
+      subagents are not resumable; fresh-spawn with prior-artifact-path + feedback is gajae-code's
+      own sanctioned fallback path.) It persists via `artifact write --stage <NN>-revision --file -`
+      and returns receipt-only.
    c. `state write` phase `review`, then return to the step 3 fan-out with fresh architect + critic
       at the new `<NN>`.
    d. Re-join both verdicts for the same revised planner artifact/pass (step 4).

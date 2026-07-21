@@ -616,12 +616,71 @@ const ROUTER_LADDER = [
   'Escapes: prompt prefixed "!" or "force:" bypasses gating this turn. Explicit user workflow choice always wins.',
   'Never implement from a spec/plan marked pending-approval without the user\'s explicit approval — "just do it" does not approve.',
   "User-facing language: mirror the user's language in every question, progress update, result, and spec/plan body; state JSON stays English.",
-  "Question style: write every question to the user in plain language a non-developer can follow — keep technical terms but gloss each on first use with a short parenthetical explanation, e.g. 마이그레이션(기존 데이터를 새 구조로 옮기는 작업) / build (turning code into something runnable); label options by outcome, not mechanism.",
+  "Explain like a UX writer — this applies to EVERY user-facing message (progress updates, mid-workflow status narration, results, AND questions), not only questions: write plain language a non-developer can follow; keep technical terms but gloss each on first use with a short parenthetical explanation so the user learns the vocabulary naturally, e.g. 합의(consensus, 검토관들이 같은 결론에 도달) / 마이그레이션(기존 데이터를 새 구조로 옮기는 작업) / build (turning code into something runnable). Do NOT dump internal agent-to-agent jargon (consensus, join gate, blast-radius, --changed-only, matcher, …) at the user unglossed. For questions, also label options by outcome, not mechanism. Agent/subagent PROMPT internals stay technical — this rule governs only what the USER reads.",
 ];
+
+// ---------------------------------------------------------------------------
+// Graph advisory (router-only, MAIN thread). Informs the main thread whether
+// `.cat/graph/graph.db` exists / how fresh it is, so it can decide whether to
+// lean on `graph query` before Read/Grep. It makes NO claim about, and has no
+// effect on, what an Agent-tool-spawned subagent (planner/architect/critic/
+// executor) receives — that is governed entirely by the orchestrator
+// SKILL.md injection contract (DESIGN.md §6). fs.statSync ONLY: never opens
+// the DB (no `node:sqlite` import), never spawns a build. Locally duplicates
+// the GRAPH_NODE_FLOOR floor (cat-state.mjs ~2590) instead of importing
+// cat-state.mjs, keeping this hook's zero-heavy-dependency contract intact.
+// ---------------------------------------------------------------------------
+const GRAPH_ADVISORY_NODE_FLOOR = [22, 13, 0];
+
+function graphAdvisoryNodeAtLeast(version, floor) {
+  const parts = String(version)
+    .split(".")
+    .map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < floor.length; i++) {
+    const have = parts[i] ?? 0;
+    if (have > floor[i]) return true;
+    if (have < floor[i]) return false;
+  }
+  return true;
+}
+
+function formatGraphAdvisoryAge(ms) {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  return `${day}d`;
+}
+
+/**
+ * Returns an advisory line, or null when the line should be omitted (an
+ * inaccessible/corrupt db path fails open by simply dropping the line, per
+ * the caller's isolation contract — never throws here on a stat error).
+ */
+function graphAdvisoryLine(cwd) {
+  if (!graphAdvisoryNodeAtLeast(process.versions.node, GRAPH_ADVISORY_NODE_FLOOR)) {
+    return `[graph: needs Node 22.13+ (have ${process.versions.node}) — code exploration falls back to Read/Grep]`;
+  }
+  const dbPath = path.join(cwd, ".cat", "graph", "graph.db");
+  let stat;
+  try {
+    stat = fs.statSync(dbPath);
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return "[graph: not built yet — cat-harness:ralplan/ultragoal/team auto-refresh it at workflow start; Read/Grep until then]";
+    }
+    return null; // inaccessible/corrupt stat: fail-open, omit the line entirely
+  }
+  const age = formatGraphAdvisoryAge(Date.now() - stat.mtimeMs);
+  return `[graph: last built ${age} ago (.cat/graph/graph.db) — HINT only, verify with Read/Grep]`;
+}
 
 function buildRouterBlock(input) {
   const lines = [];
-  const { sid, dir } = input ? sessionOf(input) : { sid: null, dir: null };
+  const { sid, dir, cwd } = input ? sessionOf(input) : { sid: null, dir: null, cwd: process.cwd() };
   const stateRoot = sid ? `.cat/_session-${sid}` : ".cat";
   lines.push(`state_root: ${stateRoot} | helper: node "${PLUGIN_ROOT}/scripts/cat-state.mjs"`);
 
@@ -650,6 +709,17 @@ function buildRouterBlock(input) {
     if (risks.length > 0) advisories.push(`scope-risk: ${risks.map(risk => `"${risk}"`).join(", ")}`);
     if (advisories.length > 0) parts.push(advisories.join(", "));
     if (parts.length > 0) lines.push(`[${parts.join(" | ")}]`);
+
+    // Own isolated try/catch (mirrors the `entries` isolation pattern above):
+    // a failure here drops only this one advisory line, never the router.
+    if (signals.includes("file-path") || signals.includes("symbol")) {
+      try {
+        const advisory = graphAdvisoryLine(cwd);
+        if (advisory) lines.push(advisory);
+      } catch (error) {
+        warn(`graph advisory degraded: ${error && error.message ? error.message : error}`);
+      }
+    }
 
     const designSources = detectDesignSources(prompt);
     if (designSources.length > 0) {

@@ -1,5 +1,65 @@
 # Changelog
 
+## 1.3.0 — Code-graph auto-refresh + planner/executor-only blast-radius injection (2026-07-21)
+
+Non-breaking MINOR. Closes the gap between `graph build`/`graph query` existing in
+`scripts/cat-state.mjs` (since the WS2 code-graph work) and anything ever calling them
+automatically: nothing refreshed `.cat/graph/graph.db`, and nothing fed graph facts into subagent
+context — `agents/*.md` only *guided* agents to prefer the graph if they chose to query it
+themselves. `ralplan`, `ultragoal`, and `team` now drive the graph themselves, and — the crux of
+this release — the injected blast-radius map is an **authoring-lane-only** aid.
+
+- **Router advisory (`hooks/cat-hook.mjs`)**: a new, gated `[graph: …]` line in the
+  `UserPromptSubmit` router block reports whether `.cat/graph/graph.db` exists / is fresh, ONLY
+  when the prompt carries a file-path or symbol signal. `fs.statSync`-only (never opens the DB, no
+  `node:sqlite` import, no spawn), own isolated try/catch, Node-floor-aware (< 22.13 states the
+  floor plainly instead of implying a build that can never happen). Informs the MAIN thread only —
+  it makes no claim about, and has no effect on, what a spawned subagent receives. `hooks/hooks.json`
+  is unchanged (still 4 events).
+- **Orchestrator-triggered graph refresh (`skills/{ralplan,ultragoal,team}/SKILL.md`)**: one full
+  `graph build` (no `--changed-only`) at the first planner/executor spawn of a run, `graph build
+  --changed-only` at every later phase-start within that run — always best-effort and non-blocking
+  (a locked DB, a below-floor Node, or any build error is a silent fallback to pre-automation
+  behavior). This retires the empty-DB first-build false positive (`incremental_since_full_build:
+  true` even though a cold-start `--changed-only` build has 100% complete data — see DESIGN.md §4
+  and the new `scripts/cat-state.test.mjs` fixture).
+- **Planner/executor-only blast-radius injection**: when a task/goal/lane names real files (cap 3,
+  or ≤3 per lane for team), a pinned-format `[blast-radius HINT]` block (`graph query` results,
+  ≤800 bytes/file, staleness-marked when `incremental_since_full_build:true` or `stale:true`) is
+  spliced into the **planner** dispatch (ralplan) or **executor** dispatch (ultragoal, team) —
+  identical rendering across all three SKILL.md files. `agents/planner.md`/`agents/executor.md`
+  gained one sentence: an injected block carries the same HINT-only trust level as a self-run
+  `graph query`.
+- **Reviewer independence (the reason this shipped as its own release, not a footnote)**: the
+  blast-radius block is NEVER injected into the architect or critic dispatch prompt, in any of the
+  three SKILL.md files — an explicit negative instruction sits immediately above every such spawn
+  block, and `agents/architect.md`/`agents/critic.md` are deliberately left untouched. This mirrors
+  the already-shipped precedent that `agents/planner.md`/`agents/executor.md` carry `memory: local`
+  while `agents/architect.md`/`agents/critic.md` deliberately do not (`1e90b55`) — a shared or
+  possibly-stale automated map handed to both reviewers would correlate their judgment and erode
+  the independence ralplan's join gate (Critic `OKAY` AND Architect `CLEAR`+`APPROVE`) depends on.
+  New DESIGN.md §6 subsection states the invariant by name.
+- **Corrected rationale, not a new conclusion**: `hooks/hooks.json`'s PreToolUse matcher includes
+  `Agent|Task` and DOES fire on subagent dispatch — but a PreToolUse hook can only allow/deny/
+  annotate the tool call, it cannot inject content into or rewrite a spawned subagent's own dispatch
+  prompt. A hook-triggered detached background build was considered and rejected: it would
+  re-bless the exact background-process pattern 1.2.0 removed (no server process, no network
+  egress, no cross-project registry — this release keeps that), and it still could not reach a
+  subagent's dispatch prompt by itself, so the orchestrator SKILL.md's own prompt composition
+  remains the only injection point, same conclusion as before, now correctly reasoned.
+- **Surface unchanged**: no new hook event (still 4), no new skill, no new agent, no new
+  `cat-state.mjs` subcommand — `graph build`/`graph query`'s existing fields carry everything
+  needed.
+- **Version bump**: `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` corrected
+  from the stale `1.0.0` (left uncorrected through 1.1.0/1.2.0) to `1.3.0`.
+- **User-facing register widened to a UX-writer doctrine (`hooks/cat-hook.mjs` ROUTER_LADDER +
+  `DESIGN.md`)**: the plain-language + gloss-technical-terms-on-first-use rule now governs EVERY
+  user-facing message — progress updates, mid-workflow status narration, and results — not only
+  AskUserQuestion questions. Internal agent-to-agent jargon (consensus, join gate, blast-radius,
+  `--changed-only`, matcher, …) must be glossed or avoided when talking to the user; agent/subagent
+  prompt internals stay technical. Injected every prompt via the router block (verified to fit the
+  4 KiB bound: a representative block is ~2.1 KiB).
+
 ## 1.2.0 — Remove the dashboard subsystem (2026-07-21)
 
 Removes `dashboard/` (the status server + monitoring UI, ~133MB / 95 tracked files) and every piece of

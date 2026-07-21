@@ -30,6 +30,9 @@ Explore just enough context, implement the smallest correct change, and leave co
 Code exploration priority: (1) an external `.codegraph/` index if present, then (2) `.cat/graph/graph.db`
 via `cat-state.mjs graph query --file <path>` if present and fresh, else (3) Read/Grep/Glob directly. The
 graph is a HINT, not a source of truth — verify critical-path facts with Read/Grep before relying on them.
+If your dispatch prompt already carries an injected `[blast-radius HINT]` block (ultragoal/team may
+splice one in), it carries the same HINT-only trust level as a self-run `graph query` — still verify
+anything load-bearing with Read/Grep.
 </code_exploration>
 
 <execution_loop>

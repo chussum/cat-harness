@@ -87,6 +87,17 @@ execution requests, deep-interview's Suitability Gate exits immediately when a
 request is already clear and bounded ("a small verification need does not make
 a request interview-worthy").
 
+**Code-graph advisory** (main thread only): when a prompt carries a file-path or
+symbol signal, the router also reports whether `.cat/graph/graph.db` exists and
+how fresh it is (`fs.statSync` only — never opens the DB, never spawns a build).
+This informs *your* own next move; it makes no promise about what a
+subagent (planner/architect/critic/executor) receives — that is governed
+entirely by the orchestrated workflows below (`ralplan`/`ultragoal`/`team`
+auto-refresh the graph and, for planner/executor only, splice a
+`[blast-radius HINT]` into the dispatch prompt). On a Node below the graph's
+22.13.0 floor, the advisory says so plainly rather than implying a build that
+can never happen.
+
 **Escapes**: prefix your prompt with `!` or `force:` to bypass gating for that
 turn. An explicit workflow choice by you always wins. One rule has no escape:
 a spec or plan marked `pending-approval` is never implemented without your
@@ -136,6 +147,11 @@ Passive, disk-only: pairs a subagent's reply with its earlier dispatch
 blocks the turn — fail-open on any capture error.
 
 ## The four workflows
+
+Code-graph auto-refresh and blast-radius injection (below, "Known limitations —
+`graph build --changed-only`") are automatic **WITHIN** `ralplan`/`ultragoal`/
+`team` only — plain main-conversation chat never auto-builds or auto-injects;
+see the router's Code-graph advisory above for what plain chat gets instead.
 
 ### deep-interview — clarity gate
 
@@ -285,6 +301,25 @@ renamed/removed file's own `stale` field reports `false`. Run a full
 caller/dependent results. `graph query` sets `incremental_since_full_build:
 true` whenever the most recent build was `--changed-only`, to flag that
 cross-file caller/dependent data may be stale even when `stale` is `false`.
+
+**Empty-DB false positive**: this signal is also `true` the very FIRST time
+`--changed-only` is ever run against a brand-new (empty) graph.db, even though
+100% of files were freshly parsed and no dangling cross-file edge is possible
+yet — `last_build_mode` is derived from the flag alone, not from whether the
+DB was actually empty. `ralplan`/`ultragoal`/`team` avoid this in practice by
+running one full `graph build` at run-start (see below) and `--changed-only`
+only at later phase-starts within the same run.
+
+**Automatic refresh inside the four workflows**: `ralplan`, `ultragoal`, and
+`team` run `graph build` for you — one full build at the first
+planner/executor spawn of a run, `--changed-only` at every later phase-start
+within that run — and, when a task/goal/lane names real files, splice a
+bounded `[blast-radius HINT]` (`graph query` results) into the **planner**
+(ralplan) or **executor** (ultragoal, team) dispatch prompt only. This never
+reaches the architect or critic dispatch — they always form their own map via
+Read/Grep/Glob, preserving the consensus gate's fresh-eyes review. Always
+best-effort: a locked DB, a below-floor Node, or any build error is a silent,
+non-blocking fallback to the pre-automation behavior described above.
 
 ## Requirements
 

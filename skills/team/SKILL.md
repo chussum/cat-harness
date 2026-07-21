@@ -105,6 +105,42 @@ Add focused tests and smoke evidence for lane A's surface.
 Write the seeded board (phase `starting`), then advance the phase to `running` via
 `state write` — mutations are blocked until you do — and spawn.
 
+## Code-graph blast-radius (executor-only, best-effort)
+
+At board-init (the first worker spawn of this run), run one full `graph build` (no
+`--changed-only`) — best-effort, non-blocking:
+
+```
+node "$CAT" graph build --session <sid>
+```
+
+Treat a non-zero exit, `EXIT_USAGE` (Node < 22.13), or `{ok:false, skipped:"locked"}` as a silent,
+non-blocking fallback — never block a launch on this. Team never re-spawns a worker mid-run except
+on a targeted re-spawn (Collect/verify/integrate step 3); if that happens, run `graph build
+--changed-only` first (cheap; the generation already advanced from the run-start full build).
+
+When a lane's file surface names specific paths (cap 3 PER LANE), run `graph query --file <path>
+--depth 2 --session <sid>` per file. When `ok:true` and `callers` is non-empty, splice the
+pinned-format block below into that **executor** worker's dispatch prompt — capped PER LANE (≤3
+files, ≤800 bytes total) to bound cost under multi-lane fan-out:
+
+```
+[blast-radius HINT — not source of truth{, possibly stale — incremental build; verify with Read/Grep}]
+<file>: <N nodes>
+  related: <symbol> (<kind>) — <file>, distance <N>
+  ... (top ~8 entries by distance, one list — callers/dependents are the same
+      underlying array in the current data model, do not render as two
+      duplicate-content sections)
+```
+
+Fields per entry are exactly what `graph query` returns for `callers`/`dependents`: `symbol`,
+`kind`, `file`, `distance` — never `line`. Prepend `(possibly stale — incremental build; verify
+with Read/Grep)` to the block's header line whenever the queried file's `graph query` response has
+`incremental_since_full_build:true` OR `stale:true`. When the graph is absent, Node is below
+22.13, or the query returns empty, inject nothing — silent fallback to the worker's own
+Read/Grep/Glob guidance (`agents/executor.md`). Team has no architect/critic spawn point of its
+own; the reviewer-independence invariant (DESIGN.md §6) applies globally regardless.
+
 ## Spawn workers
 
 Spawn one `executor` subagent per lane (Agent tool, `subagent_type: cat-harness:executor`), all
@@ -113,13 +149,14 @@ in parallel in a single message. Each assignment must contain:
 1. The lane section verbatim (its scope, file surface, and expected outcome) — never the whole
    team brief as the task.
 2. Its board task id and owner (`task-1`, `worker-1`).
-3. The boundary: "Work only inside your lane's file surface; do not modify other lanes' files;
+3. The `[blast-radius HINT]` block when applicable (Code-graph blast-radius section above).
+4. The boundary: "Work only inside your lane's file surface; do not modify other lanes' files;
    never write `.cat/**` state; never invoke cat-harness skills."
-4. The completion_evidence requirement and schema (below), and that the lane owns its own
+5. The completion_evidence requirement and schema (below), and that the lane owns its own
    verification.
-5. Receipt-only return contract: changed_files, decisions, verification, evidence
+6. Receipt-only return contract: changed_files, decisions, verification, evidence
    (with the completion_evidence object), blockers — no file bodies or full diffs.
-6. Worktree isolation whenever 2+ lanes mutate files in parallel: create one git worktree per
+7. Worktree isolation whenever 2+ lanes mutate files in parallel: create one git worktree per
    mutating lane before spawning, give each worker its worktree path, and instruct it to commit
    there; the leader integrates afterwards. Skip worktrees only when at most one lane writes.
 

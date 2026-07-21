@@ -2137,6 +2137,55 @@ test(
   }
 );
 
+test(
+  "graph build: --changed-only as the very first build ever (empty DB, cold start) still sets incremental_since_full_build:true despite 100% complete data — the empty-DB false positive a run-start FULL build must avoid",
+  { skip: GRAPH_SKIP },
+  () => {
+    const project = mkGraphProject({
+      "fileA.js": "export function funcX() {\n  return 1;\n}\n",
+      "fileB.js": "import { funcX } from './fileA.js';\nexport function callsIt() {\n  return funcX();\n}\n",
+    });
+
+    // Cold start: skip the usual first FULL build and call --changed-only
+    // directly against a brand-new (empty) graph.db.
+    const build1 = runGraphBuild(project, { changedOnly: true });
+    assert.equal(build1.status, 0, build1.stderr);
+    assert.equal(build1.json.ok, true);
+    assert.equal(build1.json.changed_only, true);
+    // Every file was freshly parsed from empty — data is 100% complete, no
+    // dangling cross-file edges are even possible yet at this point.
+    assert.equal(build1.json.files_changed, build1.json.total_files);
+    assert.equal(build1.json.files_pruned, 0);
+    // Yet the build-side honesty signal still reports incremental, because
+    // last_build_mode is derived from the --changed-only flag alone, not
+    // from whether the DB was actually empty beforehand.
+    assert.equal(build1.json.incremental_since_full_build, true);
+
+    const q1 = runGraphQuery(project, "fileA.js", { depth: 2 });
+    assert.equal(q1.status, 0, q1.stderr);
+    assert.equal(q1.json.stale, false);
+    // The false positive this test proves necessary to avoid: the query-side
+    // honesty signal is ALSO true even though nothing could possibly be
+    // stale — this is a cold start, there was no prior build to diverge from.
+    assert.equal(q1.json.incremental_since_full_build, true);
+    assert.deepEqual(q1.json.callers.map((c) => c.id).sort(), ["fileB.js", "fileB.js::callsIt"]);
+
+    // The mitigation this fixture validates: a run-start FULL build (no
+    // --changed-only) clears the signal back to false, proving orchestrators
+    // must run one full build at run-start rather than trusting
+    // --changed-only from a cold DB (skills/{ralplan,ultragoal,team}/SKILL.md).
+    const build2 = runGraphBuild(project);
+    assert.equal(build2.status, 0, build2.stderr);
+    assert.equal(build2.json.changed_only, false);
+    assert.equal(build2.json.incremental_since_full_build, false);
+
+    const q2 = runGraphQuery(project, "fileA.js", { depth: 2 });
+    assert.equal(q2.status, 0, q2.stderr);
+    assert.equal(q2.json.incremental_since_full_build, false);
+    assert.deepEqual(q2.json.callers.map((c) => c.id).sort(), ["fileB.js", "fileB.js::callsIt"]);
+  }
+);
+
 test("graph build: a file with unparseable syntax does not crash the build (parse_status skipped/partial)", { skip: GRAPH_SKIP }, () => {
   const project = mkGraphProject({
     "good.js": "export function ok() { return 1; }\n",
