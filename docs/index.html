@@ -360,6 +360,7 @@ footer a{color:var(--dim)}
       <a href="#flow" data-i18n="nav.how">작동 방식</a>
       <a href="#demo" data-i18n="nav.demo">인터뷰 데모</a>
       <a href="#agents" data-i18n="nav.agents">에이전트</a>
+      <a href="#code-graph" data-i18n="nav.graph">코드 그래프</a>
       <a href="#install" class="keep" data-i18n="nav.install">설치</a>
       <div class="lang" role="group" aria-label="Language">
         <button data-lang="ko" class="on">KO</button><button data-lang="en">EN</button>
@@ -484,9 +485,9 @@ footer a{color:var(--dim)}
       <div class="dqa-copy rv">
         <p class="lede" style="margin-top:0" data-i18n="dqa.lede">픽셀 차이를 눈으로 잡는 시대는 끝났습니다. 시안의 숫자와 구현의 computed style을 기계가 대조하고, 어긋나면 완료를 막습니다.</p>
         <ul>
-          <li data-i18n="dqa.i1">Figma 노드에서 spec 수치 추출 — 간격·색상·타이포를 숫자로</li>
+          <li data-i18n="dqa.i1">Figma 노드에서 기대 수치 추출 — 배지·라벨까지 크기 있는 노드는 전부, 샘플링 없이</li>
           <li data-i18n="dqa.i2">디자인 브레이크포인트 그대로 Playwright 캡처 (1:1 원칙)</li>
-          <li data-i18n="dqa.i3">computed-style 실측값과 대조, 심각도 분류</li>
+          <li data-i18n="dqa.i3">두 숫자 규칙 — 시안 수치와 실측 computed style이 둘 다 있어야 갭으로 인정하고 심각도를 매깁니다</li>
           <li data-i18n="dqa.i4">Critical/Major 갭은 완료를 차단 — 픽셀 몇 개도 Major는 Major</li>
         </ul>
         <p class="kicker" data-i18n="dqa.kicker">디자이너의 "시안이랑 조금 달라요" 코멘트 — 받기 전에 잡으세요.</p>
@@ -529,6 +530,22 @@ footer a{color:var(--dim)}
         <p data-i18n="agents.p4">승인된 계획만 구현합니다. 작고 되돌릴 수 있는 diff, 모든 주장엔 증거를 붙입니다.</p>
         <div class="verdicts"><span class="v">small diffs</span><span class="v hot">receipts</span></div></div>
     </div>
+  </div>
+</section>
+
+<section id="code-graph" class="hairline-top">
+  <div class="wrap">
+    <p class="eyebrow rv">Code graph</p>
+    <h2 class="rv" data-i18n-html="cg.h2">계획하기 전에,<br>코드의 호출 관계부터 읽습니다</h2>
+    <p class="lede rv" data-i18n="cg.lede">ralplan·ultragoal·team은 계획을 세우기 전에 저장소의 코드 그래프(호출 관계 지도 — 어떤 함수가 무엇을 부르는지)를 만들고, 바꾸려는 파일이 어디까지 번지는지 — 변경 파급 범위(blast-radius) — 를 계획 담당 에이전트에게 건네줍니다. Node 18+만 있으면 되고, 따로 설치할 것은 없습니다.</p>
+    <div class="dqa-copy rv" style="margin-top:22px">
+      <ul>
+        <li data-i18n="cg.i1">JS·TS·TSX를 파싱해 호출 관계 지도를 만듭니다 — 서버도 네트워크도 없이 저장소 안에서 (web-tree-sitter + sql.js, 둘 다 동봉)</li>
+        <li data-i18n="cg.i2">planner와 executor에게만 변경 파급 범위 힌트를 전달합니다 — 무엇을 건드리면 어디가 흔들리는지</li>
+        <li data-i18n="cg.i3">지도는 워크플로가 알아서 새로고침합니다 — 처음엔 전체 빌드, 이후엔 바뀐 파일만</li>
+      </ul>
+    </div>
+    <div class="gatecard rv" style="margin-top:24px" data-i18n-html="cg.gate"><b>검토관(architect·critic)에게는 이 지도를 주지 않습니다.</b> 같은 힌트를 공유하면 두 검토가 서로 닮아버려, 합의 게이트가 지키려는 '독립적인 눈'이 사라지기 때문입니다.</div>
   </div>
 </section>
 
@@ -586,7 +603,7 @@ document.documentElement.classList.add('js');
 
 /* ---------- i18n ---------- */
 const EN = {
-  'nav.philosophy':'Philosophy','nav.how':'How it works','nav.demo':'Interview demo','nav.agents':'Agents','nav.install':'Install',
+  'nav.philosophy':'Philosophy','nav.how':'How it works','nav.demo':'Interview demo','nav.agents':'Agents','nav.graph':'Code graph','nav.install':'Install',
   'btn.copy':'Copy','btn.copied':'Copied ✓',
   'hero.h1':'Before building,<br><em>it asks.</em>',
   'hero.sub':'One vague prompt and it builds the wrong thing; a "done" you can\'t trust. cat-harness breaks the habit — it asks when things are vague, gets every plan reviewed, and proves completion with evidence. No config, no slash commands.',
@@ -628,11 +645,17 @@ const EN = {
   'dqa.h2':'One Figma link,<br>and design gets verified too',
   'dqa.lede':'Stop catching pixel drift by eye. The design\'s numbers are checked against the build\'s computed styles — and mismatches block completion.',
   'dqa.kicker':'Catch it before your designer does.',
-  'dqa.i1':'Spec values extracted from Figma nodes — spacing, color, type as numbers',
+  'dqa.i1':'Expected values pulled from Figma nodes — every sized node down to badges and labels, no sampling',
   'dqa.i2':'Playwright captures at the design\'s own breakpoints (1:1 rule)',
-  'dqa.i3':'Compared against computed styles, gaps classified by severity',
+  'dqa.i3':'The two-numbers rule — a gap counts only when both the design\'s number and the measured computed style exist, then it\'s severity-ranked',
   'dqa.i4':'Critical/Major gaps block completion — a few pixels is still Major',
   'dqa.fbar':'<b>Figma</b> · expected','dqa.ibar':'<b>Impl</b> · measured',
+  'cg.h2':'Before planning,<br>it reads your code\'s call graph',
+  'cg.lede':'Before drafting a plan, ralplan / ultragoal / team build a code graph of your repo (a map of what calls what) and hand the planning agent the blast-radius — which files a change ripples into. All it needs is Node 18+; there\'s nothing to install.',
+  'cg.i1':'Parses JS/TS/TSX into a call map — no server, no network, all inside the repo (vendored web-tree-sitter + sql.js)',
+  'cg.i2':'Only the planner and executor get the blast-radius hint — touch this, and here\'s what shakes',
+  'cg.i3':'The map refreshes itself inside the workflow — a full build first, then only changed files',
+  'cg.gate':'<b>The reviewers (architect &amp; critic) are never handed this map.</b> A shared hint would make their two reviews resemble each other — erasing the independent eyes the consensus gate depends on.',
   'ins.h2':'One minute is enough',
   'ins.lede':'Node.js 18+ is all you need. No account, no config file. Then just ask as usual — the router takes it from there.',
   'ins.req':'In a hurry? Prefix a prompt with <span class="mono">!</span> or <span class="mono">force:</span> to skip the gate for that turn. Manual entry: <span class="mono">/cat-harness:interview · :plan · :execute · :team</span>',
@@ -754,7 +777,7 @@ ko:[
   items:['수식: ambiguity = 1 − (goal×0.40 + constraints×0.30 + criteria×0.30)','disputed fact가 하나라도 있으면 floor가 10%에 고정됩니다 — 해소 전엔 수렴하지 않습니다','산출물은 pending-approval 상태의 스펙 문서입니다'],
   gate:'<b>인터뷰 중에는 코드를 쓸 수 없습니다.</b> Edit/Write/Bash 쓰기가 훅에서 차단됩니다.'},
  {badge:'게이트 — Critic OKAY ∧ Architect CLEAR+APPROVE',title:'계획은 심사를 통과해야 계획입니다',
-  body:'planner가 초안을 쓰면, 서로를 모르는 architect와 critic이 같은 sha256 아티팩트를 병렬 리뷰합니다. 둘 다 승인할 때까지 최대 5회 반복.',
+  body:'planner가 초안을 쓰면, 서로를 모르는 architect와 critic이 같은 sha256 아티팩트를 병렬 리뷰합니다. 반복 횟수는 위험도로 정합니다 — 위험이 크면 최대 5회·opus 리뷰, 작으면 최대 2회·sonnet 리뷰(고위험 신호가 나오면 즉시 5회로 상향).',
   items:['합의 후, 리뷰 과정에서 생긴 가정을 하나씩 확인받습니다','최종 계획은 pending-approval.md — "그냥 해줘"로는 승인되지 않습니다','승인하면 ultragoal(기본) 또는 team으로 넘어갑니다'],
   gate:'<b>승인은 질문에 직접 답해야 성립합니다.</b> 애매한 동의는 계획을 pending으로 남겨 둡니다.'},
  {badge:'게이트 — 품질게이트 JSON을 CLI가 fail-closed 검증',title:'증거가 쌓여야 완료가 됩니다',
@@ -772,7 +795,7 @@ en:[
   items:['Formula: ambiguity = 1 − (goal×0.40 + constraints×0.30 + criteria×0.30)','A single disputed fact pins the floor at 10% — no convergence until it\'s resolved','The output is a spec document in pending-approval state'],
   gate:'<b>No code gets written during the interview.</b> Edit/Write/Bash writes are blocked at the hook level.'},
  {badge:'Gate — Critic OKAY ∧ Architect CLEAR+APPROVE',title:'A plan isn\'t a plan until it passes review',
-  body:'The planner drafts; then an architect and a critic — blind to each other — review the same sha256-addressed artifact in parallel. Up to 5 rounds until both approve.',
+  body:'The planner drafts; then an architect and a critic — blind to each other — review the same sha256-addressed artifact in parallel. Rounds are set by risk: up to 5 with opus review when risk is high, up to 2 with sonnet when it\'s low — escalating to 5 the moment a high-risk signal appears.',
   items:['After consensus, every assumption made during review is confirmed with you, one by one','The final plan stays pending-approval.md — "just do it" doesn\'t approve','On approval it hands off to ultragoal (default) or team'],
   gate:'<b>Approval means answering a direct question.</b> Vague agreement leaves the plan pending.'},
  {badge:'Gate — the CLI validates the quality gate, fail-closed',title:'Completion is earned with evidence',
