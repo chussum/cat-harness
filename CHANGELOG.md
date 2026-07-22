@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.1 — Fix stale Node-22.13 floor in the three orchestrator SKILL.md files (2026-07-22)
+
+Patch. 1.4.0 removed the code-graph Node floor from `scripts/cat-state.mjs` (sql.js/WASM runs on
+Node 18+) and updated the hook advisory + tests, but left the old floor language in the three
+orchestrator skills — so on **Node 18–21** the graph would build fine (`graph.db` created) yet the
+blast-radius hint was never spliced into the subagent dispatch prompt, because the SKILL text still
+told the orchestrator to "inject nothing" when "Node is below 22.13". Symptom: graph.db exists but
+planner/executor subagents fall straight back to grep/find. Verified: `graph build`/`graph query`
+both return `ok:true` on Node v20.15.1.
+
+- **`skills/{ralplan,ultragoal,team}/SKILL.md`**: removed the `EXIT_USAGE (Node < 22.13)`
+  parenthetical from the best-effort build-guard, and the `Node is below 22.13` clause from the
+  inject-nothing fallback condition (6 spots total). The fallback now fires only on the real
+  conditions — a failed/locked build, an absent graph, or an empty query — matching what
+  `cat-state.mjs` actually does. No behavior change on Node 22.13+; on Node 18–21 the hint now
+  injects as designed.
+- No code, hook, agent, or surface change — docstring-only correction across the three skills.
+
 ## 1.4.0 — Code-graph storage engine: `node:sqlite` → vendored sql.js (WASM SQLite); Node floor back to 18+ (2026-07-22)
 
 Non-breaking MINOR (lowers a requirement, doesn't raise one). `graph build`/`graph query`

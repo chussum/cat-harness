@@ -170,7 +170,7 @@ best-effort, non-blocking:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/cat-state.mjs" graph build --session <sid>
 ```
 
-Treat a non-zero exit, `EXIT_USAGE` (Node < 22.13), or `{ok:false, skipped:"locked"}` as a silent,
+Treat a non-zero exit or `{ok:false, skipped:"locked"}` as a silent,
 non-blocking fallback — never block the goal loop on this. At every subsequent goal-loop iteration
 within the SAME run (each later executor spawn), run `graph build --changed-only` instead (cheap;
 the generation already advanced from the run-start full build).
@@ -194,8 +194,7 @@ Fields per entry are exactly what `graph query` returns for `callers`/`dependent
 `kind`, `file`, `distance` — never `line`. Size bound: top ~8 entries by distance, ≤800 bytes total
 per file queried, ≤3 files per goal. Prepend `(possibly stale — incremental build; verify with
 Read/Grep)` to the block's header line whenever the queried file's `graph query` response has
-`incremental_since_full_build:true` OR `stale:true`. When the graph is absent, Node is below 22.13,
-or the query returns empty, inject nothing — silent fallback to the executor's own Read/Grep/Glob
+`incremental_since_full_build:true` OR `stale:true`. When the graph is absent or the query returns empty, inject nothing — silent fallback to the executor's own Read/Grep/Glob
 guidance (`agents/executor.md`).
 
 ### Mandatory implementation delegation on big scope

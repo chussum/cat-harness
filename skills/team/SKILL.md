@@ -114,7 +114,7 @@ At board-init (the first worker spawn of this run), run one full `graph build` (
 node "$CAT" graph build --session <sid>
 ```
 
-Treat a non-zero exit, `EXIT_USAGE` (Node < 22.13), or `{ok:false, skipped:"locked"}` as a silent,
+Treat a non-zero exit or `{ok:false, skipped:"locked"}` as a silent,
 non-blocking fallback — never block a launch on this. Team never re-spawns a worker mid-run except
 on a targeted re-spawn (Collect/verify/integrate step 3); if that happens, run `graph build
 --changed-only` first (cheap; the generation already advanced from the run-start full build).
@@ -136,8 +136,7 @@ files, ≤800 bytes total) to bound cost under multi-lane fan-out:
 Fields per entry are exactly what `graph query` returns for `callers`/`dependents`: `symbol`,
 `kind`, `file`, `distance` — never `line`. Prepend `(possibly stale — incremental build; verify
 with Read/Grep)` to the block's header line whenever the queried file's `graph query` response has
-`incremental_since_full_build:true` OR `stale:true`. When the graph is absent, Node is below
-22.13, or the query returns empty, inject nothing — silent fallback to the worker's own
+`incremental_since_full_build:true` OR `stale:true`. When the graph is absent or the query returns empty, inject nothing — silent fallback to the worker's own
 Read/Grep/Glob guidance (`agents/executor.md`). Team has no architect/critic spawn point of its
 own; the reviewer-independence invariant (DESIGN.md §6) applies globally regardless.
 
