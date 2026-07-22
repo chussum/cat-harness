@@ -656,7 +656,7 @@ function graphAdvisoryLine(cwd) {
     stat = fs.statSync(dbPath);
   } catch (error) {
     if (error && error.code === "ENOENT") {
-      return "[graph: not built yet — cat-harness:ralplan/ultragoal/team auto-refresh it at workflow start; Read/Grep until then]";
+      return "[graph: not built yet — cat-harness:deep-interview/ralplan/ultragoal/team auto-refresh it at workflow start; Read/Grep until then]";
     }
     return null; // inaccessible/corrupt stat: fail-open, omit the line entirely
   }

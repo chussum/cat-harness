@@ -702,7 +702,7 @@ test(
     assert.ok(!/needs Node/.test(ctx), `floor wording must be gone entirely, got: ${ctx}`);
     assert.match(
       ctx,
-      /\[graph: not built yet — cat-harness:ralplan\/ultragoal\/team auto-refresh it at workflow start; Read\/Grep until then\]/,
+      /\[graph: not built yet — cat-harness:deep-interview\/ralplan\/ultragoal\/team auto-refresh it at workflow start; Read\/Grep until then\]/,
     );
   },
 );
@@ -714,7 +714,7 @@ test("graph advisory: absent .cat/graph/graph.db reports the 'not built yet' wor
   const ctx = JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
   assert.match(
     ctx,
-    /\[graph: not built yet — cat-harness:ralplan\/ultragoal\/team auto-refresh it at workflow start; Read\/Grep until then\]/,
+    /\[graph: not built yet — cat-harness:deep-interview\/ralplan\/ultragoal\/team auto-refresh it at workflow start; Read\/Grep until then\]/,
   );
 });
 

@@ -421,8 +421,8 @@ import), never spawns a build, own isolated try/catch (a failure drops only this
 router). No Node-version floor to duplicate anymore — `graph build`/`graph query` moved off
 `node:sqlite` onto vendored sql.js (WASM SQLite), which needs only Node's built-in `WebAssembly`, so
 the graph feature works on this plugin's own Node 18+ baseline unconditionally. `.cat/graph/graph.db`
-absent (`ENOENT`) → `[graph: not built yet — cat-harness:ralplan/ultragoal/team auto-refresh it at
-workflow start; Read/Grep until then]`; present → `[graph: last built {age} ago
+absent (`ENOENT`) → `[graph: not built yet — cat-harness:deep-interview/ralplan/ultragoal/team
+auto-refresh it at workflow start; Read/Grep until then]`; present → `[graph: last built {age} ago
 (.cat/graph/graph.db) — HINT only, verify with Read/Grep]`; any other stat error
 (inaccessible/corrupt path) → the line is omitted entirely, rest of the router block intact.
 
@@ -609,10 +609,14 @@ show the working remediation invocation (the exact deactivation `state write` co
 - Shutdown phase formula: all tasks evidence-complete → `complete`; work merged but integration pending →
   `awaiting_integration`; any failed/blocked or missing evidence → `failed`; work remaining → `cancelled`.
 
-### Code-graph automation (ralplan/ultragoal/team, planner/executor-only injection)
+### Code-graph automation (deep-interview brownfield context; ralplan/ultragoal/team planner/executor injection)
 
-Each orchestrator skill (`ralplan`, `ultragoal`, `team`) drives `graph build`/`graph query` itself —
-nothing here changes `scripts/cat-state.mjs`'s CLI contract, only who calls it and when:
+All four skills drive `graph build`/`graph query` themselves — nothing here changes
+`scripts/cat-state.mjs`'s CLI contract, only who calls it and when. The three orchestrators
+(`ralplan`, `ultragoal`, `team`) build the graph and inject a `[blast-radius HINT]` block into
+planner/executor subagents; `deep-interview` builds it for brownfield projects and queries it
+directly, with no injection (see the deep-interview bullet under Scope below). The orchestrator
+mechanics:
 
 - **Trigger**: ONE full `graph build` (no `--changed-only`) at the FIRST planner/executor spawn of a
   run; `graph build --changed-only` at every subsequent phase-start within the SAME run (ralplan
@@ -673,8 +677,19 @@ nothing here changes `scripts/cat-state.mjs`'s CLI contract, only who calls it a
   detached background build was considered and rejected for this reason (it would re-bless the exact
   side effect v1.2.0 shipped to eliminate) and because it cannot reach a subagent's dispatch prompt
   by itself (see Subagent-reach rationale above).
-- **Scope**: automatic ONLY within `ralplan`/`ultragoal`/`team`. Plain main-conversation chat never
-  auto-builds or auto-injects; the router's `graph` advisory line (§5) is informational only.
+- **deep-interview (self-run brownfield context, NO injection)**: `deep-interview` also drives a
+  best-effort `graph build` — ONCE, at brownfield detection (Phase 1) — but its use is categorically
+  different from the three orchestrators. There is no planner/executor subagent in its core loop, so
+  nothing is injected: the interviewer (main thread) runs `graph query` ITSELF to ground the
+  brownfield Context dimension, exactly the way `agents/*.md` describe self-run graph access. No
+  `[blast-radius HINT]` block is composed, and the reviewer-independence invariant is not engaged —
+  the interviewer is the author, and the Phase 3 lateral panel never receives an injected map.
+  Greenfield interviews skip the build entirely (nothing to map). Silent fallback to Read/Grep/Glob
+  on any failure or empty query, same as everywhere else.
+- **Scope**: automatic within `deep-interview` (self-run brownfield context) and
+  `ralplan`/`ultragoal`/`team` (planner/executor blast-radius injection). Plain main-conversation
+  chat never auto-builds or auto-injects; the router's `graph` advisory line (§5) is informational
+  only.
 
 ## 7. Agents (`agents/*.md`, CC frontmatter: name/description/tools/model)
 

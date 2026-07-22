@@ -149,10 +149,14 @@ blocks the turn — fail-open on any capture error.
 
 ## The four workflows
 
-Code-graph auto-refresh and blast-radius injection (below, "Known limitations —
-`graph build --changed-only`") are automatic **WITHIN** `ralplan`/`ultragoal`/
-`team` only — plain main-conversation chat never auto-builds or auto-injects;
-see the router's Code-graph advisory above for what plain chat gets instead.
+Code-graph auto-refresh is automatic **WITHIN** all four workflows, in two
+shapes. `deep-interview` builds the graph at brownfield detection and queries it
+directly to ground its own context questions (no injection — the interviewer is
+the author). `ralplan`/`ultragoal`/`team` build it and additionally splice a
+blast-radius map into the planner/executor dispatch (below, "Known limitations —
+`graph build --changed-only`"). Plain main-conversation chat never auto-builds or
+auto-injects; see the router's Code-graph advisory above for what plain chat gets
+instead.
 
 ### deep-interview — clarity gate
 

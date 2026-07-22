@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.5.0 — deep-interview uses the code graph for brownfield context (2026-07-22)
+
+Non-breaking MINOR (additive capability). Until now the code graph was driven only by the three
+orchestrators (`ralplan`/`ultragoal`/`team`); `deep-interview` already explored the codebase for
+brownfield (existing-code) projects — its Context dimension depends on it — but did so with blind
+`Read`/`Grep`/`Glob` only, never the graph. Now it uses the graph too.
+
+- **`skills/deep-interview/SKILL.md`**: at brownfield detection (Phase 1, Step 3), run one
+  best-effort `graph build` (silent, non-blocking fallback on any failure), then the interviewer
+  runs `graph query --file <path> --depth 2` ITSELF (cap 3 files) to fold real call/dependency
+  relationships into `codebase_context`, falling back to Read/Grep/Glob when the graph is absent or
+  a query returns empty. The top-of-file exploration guidance now names the graph as the preferred
+  first lookup, consistent with `agents/*.md`.
+- **Self-run, NOT injection** — deliberately different from the orchestrators. deep-interview has no
+  planner/executor subagent in its core loop, so it composes NO `[blast-radius HINT]` block and the
+  reviewer-independence invariant is not engaged (the interviewer is the author; the Phase 3 lateral
+  panel receives no injected map). Greenfield interviews skip the build entirely.
+- **Runs on Node 18+** — the build goes through the same vendored sql.js engine as everything else;
+  no separate version floor (verified `graph build`/`graph query` return `ok:true` on Node v20.15.1).
+  The phase-guard already sanctions `cat-state.mjs` invocations, so `graph build` is permitted during
+  the read-only interviewing phase.
+- **Docs**: DESIGN.md §6 (new deep-interview bullet + broadened scope), README.md ("four workflows"
+  intro), and the router's `graph: not built yet` advisory (`hooks/cat-hook.mjs` + tests) now list
+  `deep-interview` alongside the three orchestrators. All 36 hook tests pass, byte-budget bound held.
+
 ## 1.4.1 — Fix stale Node-22.13 floor in the three orchestrator SKILL.md files (2026-07-22)
 
 Patch. 1.4.0 removed the code-graph Node floor from `scripts/cat-state.mjs` (sql.js/WASM runs on
