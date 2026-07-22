@@ -252,8 +252,8 @@ pending → `awaiting_integration`; anything failed/blocked or missing evidence 
 | agent | tools | model | role |
 |---|---|---|---|
 | `planner` | Read, Grep, Glob, WebSearch, WebFetch, Bash (read-only discipline) | sonnet | drafts plans + deliberation records; receipt-only returns |
-| `architect` | Read, Grep, Glob | opus¹ | architecture + code review; CLEAR/WATCH/BLOCK + APPROVE/COMMENT/REQUEST CHANGES; evidence-cited findings |
-| `critic` | Read, Grep, Glob | opus¹ | plan-only actionability gatekeeper; OKAY/ITERATE/REJECT; checks testability, sequencing, rollback |
+| `architect` | Read, Grep, Glob, Bash (read-only: `graph query` only) | opus¹ | architecture + code review; CLEAR/WATCH/BLOCK + APPROVE/COMMENT/REQUEST CHANGES; evidence-cited findings |
+| `critic` | Read, Grep, Glob, Bash (read-only: `graph query` only) | opus¹ | plan-only actionability gatekeeper; OKAY/ITERATE/REJECT; checks testability, sequencing, rollback |
 | `executor` | all | sonnet | the only write-capable role; follows plan stages; returns receipts + evidence |
 
 ¹ frontmatter default/fallback. In ralplan's low-risk consensus passes (`reviewer_tier: "lite"`), the

@@ -658,10 +658,16 @@ mechanics:
   independence the ralplan join gate (Critic `OKAY` AND Architect `CLEAR`+`APPROVE`) depends on.
   Enforced only at the prompt level: an explicit negative instruction sits immediately above every
   architect/critic (or ultragoal's "Architect review") spawn block in all three SKILL.md files —
-  grep-verifiable, not code-enforced. `agents/architect.md`/`agents/critic.md` are deliberately left
-  untouched by this change (no mention of ever receiving an injected block); their existing "Code
-  exploration priority" paragraph already covers a SELF-run `graph query`, which remains the only
-  graph access either reviewer has.
+  grep-verifiable, not code-enforced. `agents/architect.md`/`agents/critic.md` receive no injected
+  block; their "Code exploration priority" paragraph covers a SELF-run `graph query`, which remains
+  the only graph access either reviewer has. To make that self-run access actually executable, both
+  reviewers carry a **read-only `Bash`** tool (added v1.6.0) — `cat-state.mjs graph query` needs a
+  `node` invocation, impossible with Read/Grep/Glob alone; a prompt-level constraint restricts that
+  Bash to read-only inspection (no writes, redirects, or `cat-state.mjs` write subcommands), and
+  during ralplan's guarded planning phases the PreToolUse phase-guard independently pins any Bash to
+  read-only + `cat-state.mjs`. A self-run query does NOT erode independence — it is a fast index over
+  the same ground-truth code either reviewer already reads via Grep, not a pre-digested map handed
+  identically to both; independence bans sharing conclusions or an injected map, not reading source.
 - **Subagent-reach rationale** (why the hook is not the injection point): `hooks/hooks.json`'s
   PreToolUse matcher includes `Agent|Task`, so PreToolUse DOES fire when a subagent is spawned — but
   a PreToolUse hook can only allow/deny/annotate the tool call, it cannot inject content into the
@@ -700,8 +706,8 @@ Agent-tool `subagent_type` token in skills is NAMESPACED: `cat-harness:planner`,
 | agent | tools | model | essence |
 |---|---|---|---|
 | planner | Read, Grep, Glob, WebSearch, WebFetch, Bash(read-only discipline in prompt) | sonnet | drafts plans + RALPLAN-DR; receipt-only returns |
-| architect | Read, Grep, Glob | opus | architecture+code review; CLEAR/WATCH/BLOCK + APPROVE/COMMENT/REQUEST CHANGES; evidence-cited findings |
-| critic | Read, Grep, Glob | opus | plan-only actionability gatekeeper; OKAY/ITERATE/REJECT; checks testability, sequencing, rollback |
+| architect | Read, Grep, Glob, Bash(read-only: `graph query` + inspection only, in prompt) | opus | architecture+code review; CLEAR/WATCH/BLOCK + APPROVE/COMMENT/REQUEST CHANGES; evidence-cited findings |
+| critic | Read, Grep, Glob, Bash(read-only: `graph query` + inspection only, in prompt) | opus | plan-only actionability gatekeeper; OKAY/ITERATE/REJECT; checks testability, sequencing, rollback |
 | executor | (omit tools → all) | sonnet | only write-capable role; follows plan stages; returns receipts + evidence |
 
 All read-only agents: last non-empty line = a machine-parseable verdict. Exact formats —

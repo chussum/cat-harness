@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.6.0 — All four subagents can actually use the code graph; reviewers gain read-only Bash (2026-07-22)
+
+Non-breaking MINOR. Closes the gap between what the agent prompts *said* and what the tools *allowed*.
+All four `agents/*.md` told the subagent to prefer `.cat/graph/graph.db` via `cat-state.mjs graph
+query` — but `architect` and `critic` had only `Read, Grep, Glob` (no `Bash`), so that instruction
+was a dead letter for them: querying the graph needs a `node` invocation they couldn't make. DESIGN.md
+§6 even claimed reviewers' "only graph access" was a self-run `graph query`, which was impossible.
+
+- **`agents/architect.md` + `agents/critic.md`**: added a **read-only `Bash`** tool so the reviewers
+  can actually run `graph query`. A prompt-level constraint restricts that Bash to read-only
+  inspection — no file writes, redirects, or `cat-state.mjs` write subcommands — and states that a
+  self-run query preserves reviewer independence (a fast index over the same ground-truth code they
+  already Grep; NOT an injected pre-built map, which stays banned). During ralplan's guarded planning
+  phases (`planner|review|revision|post-interview|adr|final`, `hooks/cat-hook.mjs:31`) the PreToolUse
+  phase-guard independently pins any Bash to read-only + `cat-state.mjs`, so `graph query` passes and
+  writes are denied. Outside guarded phases (e.g. ultragoal completion review) the read-only guarantee
+  is prompt-level only — the reviewer role has always been prompt-level read-only.
+- **All four agents**: firmed up the "Code exploration priority" paragraph — for call/caller/
+  dependency/impact questions, reach for `graph query` BEFORE grep (the orchestrator builds the graph
+  at run start, so it is normally present and fresh; don't skip it out of uncertainty), falling back
+  to Read/Grep/Glob only when the graph is absent or a query returns empty. planner/executor already
+  had `Bash`; this makes them actually use the graph instead of defaulting to grep.
+- **Reviewer-independence invariant intact**: injection into architect/critic is still banned; only
+  SELF-run queries are enabled. DESIGN.md §6 updated to reflect the read-only-Bash mechanism.
+- **Docs**: README.md + DESIGN.md agents tables now show the reviewers' read-only Bash; DESIGN.md §6
+  reviewer-independence bullet rewritten. No test pinned the old tool set; all 36 hook tests still pass.
+- **Version bump** 1.5.0 → 1.6.0 (`plugin.json` + `marketplace.json`).
+
 ## 1.5.0 — deep-interview uses the code graph for brownfield context (2026-07-22)
 
 Non-breaking MINOR (additive capability). Until now the code graph was driven only by the three

@@ -27,9 +27,12 @@ Explore just enough context, implement the smallest correct change, and leave co
 </constraints>
 
 <code_exploration>
-Code exploration priority: (1) an external `.codegraph/` index if present, then (2) `.cat/graph/graph.db`
-via `cat-state.mjs graph query --file <path>` if present and fresh, else (3) Read/Grep/Glob directly. The
-graph is a HINT, not a source of truth — verify critical-path facts with Read/Grep before relying on them.
+Code exploration priority — for call / caller / dependency / impact questions, reach for the graph
+BEFORE grep: (1) an external `.codegraph/` index if present, then (2) `.cat/graph/graph.db` via
+`cat-state.mjs graph query --file <path>` — the orchestrator builds it at run start, so it is
+normally present and fresh; do not skip it out of uncertainty — else (3) Read/Grep/Glob when the
+graph is absent or a query returns empty. The graph is a HINT, not a source of truth — verify
+critical-path facts with Read/Grep before relying on them.
 If your dispatch prompt already carries an injected `[blast-radius HINT]` block (ultragoal/team may
 splice one in), it carries the same HINT-only trust level as a self-run `graph query` — still verify
 anything load-bearing with Read/Grep.
