@@ -489,6 +489,7 @@ footer a{color:var(--dim)}
           <li data-i18n="dqa.i2">디자인 브레이크포인트 그대로 Playwright 캡처 (1:1 원칙)</li>
           <li data-i18n="dqa.i3">두 숫자 규칙 — 시안 수치와 실측 computed style이 둘 다 있어야 갭으로 인정하고 심각도를 매깁니다</li>
           <li data-i18n="dqa.i4">Critical/Major 갭은 완료를 차단 — 픽셀 몇 개도 Major는 Major</li>
+          <li data-i18n="dqa.i5">겹쳐서(overlay) 재고 → 코드 고치고 → 다시 캡처, 일치할 때까지 — 갭을 '보고'만 하지 않고 실제로 맞춥니다 (design-qa 스킬)</li>
         </ul>
         <p class="kicker" data-i18n="dqa.kicker">디자이너의 "시안이랑 조금 달라요" 코멘트 — 받기 전에 잡으세요.</p>
       </div>
@@ -537,7 +538,7 @@ footer a{color:var(--dim)}
   <div class="wrap">
     <p class="eyebrow rv">Code graph</p>
     <h2 class="rv" data-i18n-html="cg.h2">계획하기 전에,<br>코드의 호출 관계부터 읽습니다</h2>
-    <p class="lede rv" data-i18n="cg.lede">ralplan·ultragoal·team은 계획을 세우기 전에 저장소의 코드 그래프(호출 관계 지도 — 어떤 함수가 무엇을 부르는지)를 만들고, 바꾸려는 파일이 어디까지 번지는지 — 변경 파급 범위(blast-radius) — 를 계획 담당 에이전트에게 건네줍니다. Node 18+만 있으면 되고, 따로 설치할 것은 없습니다.</p>
+    <p class="lede rv" data-i18n="cg.lede">네 워크플로 모두 저장소의 코드 그래프(호출 관계 지도 — 어떤 함수가 무엇을 부르는지)를 씁니다. 인터뷰는 기존 코드 맥락을 잡고, 계획·실행 담당은 바꾸려는 파일이 어디까지 번지는지 — 변경 파급 범위(blast-radius) — 를 받습니다. Node 18+만 있으면 되고, 따로 설치할 것은 없습니다.</p>
     <div class="dqa-copy rv" style="margin-top:22px">
       <ul>
         <li data-i18n="cg.i1">JS·TS·TSX를 파싱해 호출 관계 지도를 만듭니다 — 서버도 네트워크도 없이 저장소 안에서 (web-tree-sitter + sql.js, 둘 다 동봉)</li>
@@ -545,7 +546,7 @@ footer a{color:var(--dim)}
         <li data-i18n="cg.i3">지도는 워크플로가 알아서 새로고침합니다 — 처음엔 전체 빌드, 이후엔 바뀐 파일만</li>
       </ul>
     </div>
-    <div class="gatecard rv" style="margin-top:24px" data-i18n-html="cg.gate"><b>검토관(architect·critic)에게는 이 지도를 주지 않습니다.</b> 같은 힌트를 공유하면 두 검토가 서로 닮아버려, 합의 게이트가 지키려는 '독립적인 눈'이 사라지기 때문입니다.</div>
+    <div class="gatecard rv" style="margin-top:24px" data-i18n-html="cg.gate"><b>검토관(architect·critic)에게는 미리 만든 지도를 '건네주지' 않습니다.</b> 같은 힌트를 양쪽에 주면 두 검토가 서로 닮아버리거든요. 대신 검토관은 필요할 때 직접 그래프를 조회합니다 — grep으로 같은 코드를 보는 것과 같아, 합의 게이트가 지키려는 '독립적인 눈'은 그대로 유지됩니다.</div>
   </div>
 </section>
 
@@ -649,13 +650,14 @@ const EN = {
   'dqa.i2':'Playwright captures at the design\'s own breakpoints (1:1 rule)',
   'dqa.i3':'The two-numbers rule — a gap counts only when both the design\'s number and the measured computed style exist, then it\'s severity-ranked',
   'dqa.i4':'Critical/Major gaps block completion — a few pixels is still Major',
+  'dqa.i5':'Overlay, measure, edit, re-capture — looped until it matches. The design-qa skill closes the gap, it doesn\'t just flag it.',
   'dqa.fbar':'<b>Figma</b> · expected','dqa.ibar':'<b>Impl</b> · measured',
   'cg.h2':'Before planning,<br>it reads your code\'s call graph',
-  'cg.lede':'Before drafting a plan, ralplan / ultragoal / team build a code graph of your repo (a map of what calls what) and hand the planning agent the blast-radius — which files a change ripples into. All it needs is Node 18+; there\'s nothing to install.',
+  'cg.lede':'All four workflows use a code graph of your repo (a map of what calls what). The interview grounds its questions in existing code; the planner and executor get the blast-radius — which files a change ripples into. All it needs is Node 18+; there\'s nothing to install.',
   'cg.i1':'Parses JS/TS/TSX into a call map — no server, no network, all inside the repo (vendored web-tree-sitter + sql.js)',
   'cg.i2':'Only the planner and executor get the blast-radius hint — touch this, and here\'s what shakes',
   'cg.i3':'The map refreshes itself inside the workflow — a full build first, then only changed files',
-  'cg.gate':'<b>The reviewers (architect &amp; critic) are never handed this map.</b> A shared hint would make their two reviews resemble each other — erasing the independent eyes the consensus gate depends on.',
+  'cg.gate':'<b>The reviewers (architect &amp; critic) are never handed a pre-built map.</b> One shared hint would make their two reviews resemble each other. Instead they query the graph themselves when needed — the same as reading the code with grep, so the independent eyes the consensus gate depends on stay independent.',
   'ins.h2':'One minute is enough',
   'ins.lede':'Node.js 18+ is all you need. No account, no config file. Then just ask as usual — the router takes it from there.',
   'ins.req':'In a hurry? Prefix a prompt with <span class="mono">!</span> or <span class="mono">force:</span> to skip the gate for that turn. Manual entry: <span class="mono">/cat-harness:interview · :plan · :execute · :team</span>',
