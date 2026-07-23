@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8">
+<!--
+  잉크 측정 템플릿 — 스크래치패드에 복사 후 이미지 경로/영역/판정식을 채워 사용.
+  http.server로 서빙 후 Playwright browser_evaluate로 `await window.__m()` 호출.
+  결과: 요소별 {ours, figma} 잉크 좌표 → 오프셋 확정.
+  주의: 비교하는 두 요소는 반드시 같은 판정식(pred)으로 잴 것.
+-->
+<body><script>
+function load(s){return new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=s;});}
+
+// 가로 잉크 span: [x0,x1)×[y0,y1) 밴드에서 잉크가 있는 최좌/최우 컬럼
+function hspan(img,x0,x1,y0,y1,pred){const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const x=c.getContext('2d');x.drawImage(img,0,0);const d=x.getImageData(0,0,img.width,img.height).data;let L=null,R=null;for(let cc=x0;cc<x1;cc++){let ink=false;for(let rr=y0;rr<y1;rr++){const i=(rr*img.width+cc)*4;if(pred(d[i],d[i+1],d[i+2])){ink=true;break;}}if(ink){if(L===null)L=cc;R=cc;}}return {L,R};}
+
+// 가로 잉크 클러스터(글자 덩어리별): runs 배열 [[start,end],...]
+function hruns(img,x0,x1,y0,y1,pred){const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const x=c.getContext('2d');x.drawImage(img,0,0);const d=x.getImageData(0,0,img.width,img.height).data;const col=[];for(let cc=x0;cc<x1;cc++){let ink=false;for(let rr=y0;rr<y1;rr++){const i=(rr*img.width+cc)*4;if(pred(d[i],d[i+1],d[i+2])){ink=true;break;}}col.push(ink?1:0);}const rs=[];let s=null;for(let k=0;k<col.length;k++){if(col[k]&&s===null)s=k;if(!col[k]&&s!==null){rs.push([s+x0,k-1+x0]);s=null;}}if(s!==null)rs.push([s+x0,col.length-1+x0]);return rs;}
+
+// 세로 잉크 rows: [[top,bottom],...] — 세로 오프셋 검출용 (가로만 재면 세로를 놓친다)
+function vruns(img,x0,x1,y0,y1,pred){const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const x=c.getContext('2d');x.drawImage(img,0,0);const d=x.getImageData(0,0,img.width,img.height).data;const rows=[];for(let rr=y0;rr<y1;rr++){let ink=false;for(let cc=x0;cc<x1;cc++){const i=(rr*img.width+cc)*4;if(pred(d[i],d[i+1],d[i+2])){ink=true;break;}}rows.push(ink?1:0);}const rs=[];let s=null;for(let k=0;k<rows.length;k++){if(rows[k]&&s===null)s=k;if(!rows[k]&&s!==null){rs.push([s+y0,k-1+y0]);s=null;}}if(s!==null)rs.push([s+y0,rows.length-1+y0]);return rs;}
+
+// 색 판정식 — 실전 검증된 값들. warm에 B 조건을 넣으면 핑크(#f55dd6, B=214)를 놓친다.
+const dark =(R,G,B)=>R<110&&G<110&&B<110;
+const warm =(R,G,B)=>R>180&&G<130;
+const blue =(R,G,B)=>B>150&&R<150&&B-R>40;
+const white=(R,G,B)=>R>235&&G>235&&B>235;
+
+window.__m = async () => {
+  const A = await load('asis/OURS.png');    // 구현 캡쳐 (Figma와 같은 px 크기!)
+  const F = await load('figma/FIGMA.png');  // Figma export
+  const both = (fn) => ({ ours: fn(A), figma: fn(F) });
+  return {
+    // 예시 — 요소별로 채워 넣기 (같은 요소는 반드시 같은 pred):
+    // title_v: both(img=>vruns(img,160,360,34,54,dark)),
+    // price_h: both(img=>hspan(img,243,312,106,128,dark)),
+    // pill_w:  both(img=>hspan(img,200,343,28,52,white)),
+  };
+};
+document.title='MEASURE_READY';
+</script></body>

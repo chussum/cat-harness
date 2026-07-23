@@ -487,6 +487,15 @@ gap + fix hint, then rerun this lane on the affected surfaces — full re-audit 
 narrow re-check of the one value) or spawns a new blocker goal (record-review-blockers) carrying the
 findings. Never downgrade a real gap to advisory to pass the gate; a few pixels off spec is still Major.
 
+**Actually apply the fix — do not stop at reporting the gap.** When the leader fixes within the goal,
+the spawned `executor` MUST run the bundled **`design-qa` skill** (`cat-harness:design-qa`, invoke it
+by name) as its fix procedure: overlay the Figma export and the implementation render at the SAME
+pixel size, measure the ink (non-background) offset, edit the code, then re-capture and judge by eye
+on the overlay — looping until the two match. This lane's job is measurement and gating; the
+`design-qa` skill's job is the hands-on overlay-and-fix loop (with its `references/` measure/overlay
+templates). Reporting a gap without running that loop is exactly the "screenshots but no fix applied"
+failure this wiring exists to close.
+
 **[R18] A Critical is NEVER waivable — fix it, full stop.** There is no path that clears a computed
 Critical other than making the implementation match the design; `qa.design.waived` cannot cover a
 Critical row and the CLI rejects it regardless of `user_acknowledged`. The same applies to a `visual[]`

@@ -1,0 +1,32 @@
+<!doctype html><meta charset="utf-8">
+<!--
+  겹침(overlay) 확인 템플릿 — 최종 판정은 항상 이 화면을 "눈으로" 본다.
+  두 가지 뷰:
+   1) 색 유지 겹침(ovColor): Figma를 50% 투명도로 구현 위에 — 최종 판정용 (8배 확대 권장)
+   2) 색 제거 위치 겹침(ovInk): 파랑=우리 / 빨강=Figma / 보라=일치 — 색·렌더링 차이에 속지 않고 위치만
+  목데이터(사진) 영역은 mask()로 회색 처리 후 비교.
+-->
+<body style="margin:0;background:#fff;font-family:sans-serif;padding:8px">
+<div>① 색 유지 겹침</div><canvas id="c1" width="880" height="300" style="border:1px solid #999"></canvas>
+<div>② 색 제거 위치 겹침 (파랑=우리/빨강=Figma/보라=일치)</div><canvas id="c2" width="880" height="300" style="border:1px solid #999"></canvas>
+<div id="rep" style="font-family:monospace;font-size:12px"></div>
+<script>
+function load(s){return new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=s;});}
+function mask(img,rects){const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const x=c.getContext('2d');x.drawImage(img,0,0);x.fillStyle='#c9c9c9';(rects||[]).forEach(([a,b,w,h])=>x.fillRect(a,b,w,h));return c;}
+function ovColor(id,A,F,x0,y0,w,h,S){const c=document.getElementById(id),x=c.getContext('2d');x.imageSmoothingEnabled=false;x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(A,x0,y0,w,h,0,0,w*S,h*S);x.globalAlpha=0.5;x.drawImage(F,x0,y0,w,h,0,0,w*S,h*S);x.globalAlpha=1;}
+function ovInk(id,A,F,x0,y0,w,h,S,pred){
+  const g=(img)=>{const c=document.createElement('canvas');c.width=img.width;c.height=img.height;const x=c.getContext('2d');x.drawImage(img,0,0);const d=x.getImageData(0,0,img.width,img.height).data;const G=[];for(let yy=0;yy<h;yy++){const r=[];for(let xx=0;xx<w;xx++){const i=((y0+yy)*img.width+(x0+xx))*4;r.push(pred(d[i],d[i+1],d[i+2])?1:0);}G.push(r);}return G;};
+  const gA=g(A),gF=g(F);const c=document.getElementById(id),ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);let oa=0,of=0,bo=0;
+  for(let yy=0;yy<h;yy++)for(let xx=0;xx<w;xx++){const a=gA[yy][xx],f=gF[yy][xx];if(!a&&!f)continue;let col;if(a&&f){col='rgba(120,40,160,.9)';bo++;}else if(a){col='rgba(37,99,235,.95)';oa++;}else{col='rgba(230,30,30,.95)';of++;}ctx.fillStyle=col;ctx.fillRect(xx*S,yy*S,S,S);}
+  return {both:bo,ours:oa,figma:of};
+}
+(async()=>{
+  const A=mask(await load('asis/OURS.png'), [/* [x,y,w,h] 사진영역 */]);
+  const F=mask(await load('figma/FIGMA.png'), [/* 동일 좌표 */]);
+  // 검사 영역/배율 채우기:
+  ovColor('c1',A,F, 0,0, 220,75, 4);
+  const st=ovInk('c2',A,F, 0,0, 220,75, 4, (R,G,B)=>R<200||G<200||B<200);
+  document.getElementById('rep').textContent='both(일치) '+st.both+' / ours '+st.ours+' / figma '+st.figma;
+  document.title='OVERLAY_READY';
+})();
+</script></body>

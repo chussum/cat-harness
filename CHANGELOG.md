@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.7.0 — Bundle the `design-qa` tool skill: a Figma-overlay pixel-matching fix loop (2026-07-24)
+
+Non-breaking MINOR (additive). Bundles a new **`design-qa`** skill (`skills/design-qa/`) — a hands-on
+Figma-overlay pixel-matching FIX loop distilled from a real QA session. It closes a gap in the
+existing design-QA lane: that lane measured and *gated* (blocked completion on Critical/Major gaps)
+but the fix step was underspecified, so in practice a run could screenshot and compare yet never
+apply the correction. `design-qa` is the fix procedure.
+
+- **New skill `skills/design-qa/SKILL.md` + `references/`** (auto-discovered, invocable as
+  `cat-harness:design-qa`, auto-triggers on "디자인 QA / 피그마랑 달라 / 간격 이슈 / 픽셀 맞춰줘").
+  Its doctrine (all from real mistakes): judge on the eyeballed overlay, not just numbers; both
+  captures MUST be the same pixel size; mask mock content; measure BOTH horizontal ink span and
+  vertical ink rows; compare with the SAME color threshold; Chrome snaps glyphs to integer px (DPR 1)
+  so sub-pixel position moves are no-ops; one fix = one re-capture + re-measure + overlay; ink
+  measurement beats Figma metadata (but never change colors without the designer). Ships two
+  `references/` templates — `measure-template.html` (ink scan) and `overlay-template.html` (color-keep
+  + position-only overlays).
+- **Wired into the completion gate**: `skills/ultragoal/references/design-qa.md` Blocker handling now
+  directs the fix executor to RUN `cat-harness:design-qa` as its fix procedure — overlay, measure,
+  edit, re-verify by eye, loop until matched. The lane still owns measurement/gating; the skill owns
+  the hands-on overlay-and-fix loop.
+- **Surface reframed, not casually grown**: the four *workflow* skills (deep-interview/ralplan/
+  ultragoal/team) stay fixed; `design-qa` is an execution TOOL skill, not a routing workflow — it adds
+  no fifth path through the interview→plan→execute ladder. README + DESIGN.md "fixed surface"
+  statements updated to distinguish workflow skills from this tool skill.
+- **Version bump** 1.6.0 → 1.7.0 (`plugin.json` + `marketplace.json`).
+
 ## 1.6.0 — All four subagents can actually use the code graph; reviewers gain read-only Bash (2026-07-22)
 
 Non-breaking MINOR. Closes the gap between what the agent prompts *said* and what the tools *allowed*.

@@ -7,7 +7,7 @@
     {
       "name": "cat-harness",
       "source": "./",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "description": "Auto-gating interview→plan→execute workflow harness inspired by gajae-code"
     }
   ]

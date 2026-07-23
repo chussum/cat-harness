@@ -11,8 +11,10 @@ implementation requests auto-route through `deep-interview → ralplan → ultra
 fail-closed behind machine-checked receipts.
 
 The surface is deliberately small and fixed, in gajae-code's spirit ("no
-sprawling default skill zoo"): 4 skills, 4 agents, 4 hook events, 1 sanctioned
-state writer, 4 thin escape-hatch commands. It does not expand casually.
+sprawling default skill zoo"): 4 workflow skills, 4 agents, 4 hook events, 1
+sanctioned state writer, 4 thin escape-hatch commands — plus one design-QA
+tool skill (`design-qa`, an execution aid, not a routing workflow). The
+workflow surface does not expand casually.
 
 ---
 
@@ -426,9 +428,12 @@ boundary, never `Blocking` — a low threshold cannot be bypassed by excluding r
   they inject context, guard tools, and gate stops. Judgment calls (is this
   vague? is this risky?) stay with the model following injected rules and
   in-skill gates.
-- **No surface growth.** 4 skills, 4 agents, 4 hook events, 1 state writer,
-  4 commands — fixed. `graph build`/`graph query` are subcommands of that one
-  existing state writer, not new surface — subcommand count is not part of
+- **No workflow-surface growth.** 4 workflow skills, 4 agents, 4 hook events, 1
+  state writer, 4 commands — fixed. The `design-qa` skill is an execution *tool*
+  (a Figma-overlay pixel-matching fix loop), not a routing workflow — it adds no
+  fifth path through the interview→plan→execute ladder. `graph build`/`graph
+  query` are subcommands of that one existing state writer, not new surface —
+  subcommand count is not part of
   the fixed count. The plugin improves by making this small method better,
   not by adding a fifth workflow.
 

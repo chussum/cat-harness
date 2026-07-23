@@ -15,7 +15,7 @@ come from the gajae-code sources (see "Fidelity sources" at the bottom).
 
 ## 1. Surface (fixed, gajae-style minimal — never expand casually)
 
-- **4 skills**: `deep-interview`, `ralplan`, `ultragoal`, `team`
+- **4 workflow skills**: `deep-interview`, `ralplan`, `ultragoal`, `team` — plus `design-qa`, a design-QA execution *tool* skill (Figma-overlay pixel-matching fix loop), not a routing workflow
 - **4 agents**: `planner`, `architect`, `critic`, `executor`
 - **4 hook events** (narrow, documented exception to "3 hook events" — G004 added `SubagentStop` for
   passive dialogue-excerpt capture only; it makes no gating decisions): `UserPromptSubmit` (router),
@@ -597,7 +597,7 @@ show the working remediation invocation (the exact deactivation `state write` co
   claude-in-chrome path) is not connected, the lane **FAILS CLOSED** — it emits a `qa.blocker` and nudges
   the user to connect the MCP (or explicitly waive), rather than silently degrading to inspection-only and
   passing. Only a genuinely absent design source skips the lane. Test-case generation / reports / Jira are OUT of scope
-  (the standalone Zigzag_web_QA skill covers those). Surface stays 4-skill: this is a reference fragment.
+  (the standalone Zigzag_web_QA skill covers those). Workflow surface stays 4: this is a reference fragment that points the fix step at the `design-qa` tool skill (below).
 - All goals terminal → phase `complete`; report receipts summary (never claim done without `receipt verify`).
 
 ### team (`skills/team/SKILL.md`)
