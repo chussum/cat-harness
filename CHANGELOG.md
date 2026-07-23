@@ -444,8 +444,8 @@ structural things. This makes the check MECHANICAL.
 Doctrine-only refinements from a run retrospective (no code/dashboard change).
 
 - **executor: safe search of minified/bundled files** (`agents/executor.md`
-  `<search_efficiency>`). To find what an API or design system (e.g. zds)
-  exposes, prefer its type defs (`.d.ts`) / `exports` / docs over grepping the
+  `<search_efficiency>`). To find what an API or design system (a component
+  library) exposes, prefer its type defs (`.d.ts`) / `exports` / docs over grepping the
   compiled bundle. When you must search a minified single-huge-line file, never
   point a backtracking regex at it (it can catastrophically backtrack and hang
   for minutes) — use `grep -F` / ripgrep and scope narrowly. Looking at minified

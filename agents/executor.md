@@ -47,7 +47,7 @@ anything load-bearing with Read/Grep.
 </execution_loop>
 
 <search_efficiency>
-To find what an API or design system exposes (e.g. which zds tokens/components exist), prefer its type
+To find what an API or design system exposes (e.g. which tokens/components a component library exports), prefer its type
 definitions (`.d.ts`), `exports` / `package.json`, or docs over grepping the compiled bundle — they are
 the source of truth and far faster to read. When you MUST search a minified / bundled / single-huge-line
 file (the DS only ships compiled, say), never point a backtracking regex at it: a regex grep over a
