@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.7.1 — design-qa doctrine hardened from a second real QA session (2026-07-24)
+
+Non-breaking PATCH (docs/skill-content only; no code, surface, or agent changes). A second real
+pixel-QA session surfaced failure modes the 1.7.0 doctrine didn't cover; this folds them back into
+`skills/design-qa/`.
+
+- **Four new iron rules (11–14)**: never pre-split measurement x-ranges (splitting pins both values
+  to the boundary and false-passes a real 1px gap — actual incident); measure the DS asset's rasterized
+  ink width before applying nominal Figma gap values, and compute which ink moves under the container's
+  alignment; one reported defect → full-component audit (x/y/box-height/inter-element distances in one
+  table), since partial fixes invite serial re-reports; absorb glyph advance-width renderer differences
+  via letter-spacing snap experiments (measure 0 / 0.15 / 0.2px candidates, keep the max-match one).
+- **New §2 fallback — DOM + Figma coordinate comparison** for areas ink scanning can't judge (text
+  over photos): `get_metadata` absolute coords vs `getBoundingClientRect()` + computed line-height,
+  joined in one table. New **§2.5 full-audit pass** formalizing rule 13.
+- **Figma capture pitfalls** documented: 1×1-png exports (broken masters → use another instance),
+  parent-frame-clipped instances, and picking the viewport where the implementation renders at the
+  Figma node's exact width for 1:1 overlays.
+- **Cause map +7 rows** (line-height sag in bottom-anchored stacks, DS icon ink-width gap, alignment-
+  driven group shifts, glyph-advance drift, optical indents, narrow-viewport wrapping) and **§4.5**
+  on overlay zoom levels and mock-copy-vs-Figma-copy anchor discipline; report checklist additions
+  (summary-list sync, slider validation at truly-differing pixels, same-path artifact republish).
+- **Anti-pattern list +5** — all from real mistakes in the session.
+- `references/measure-template.html`: header warnings against pre-split ranges and for the DOM fallback.
+- **Version bump** 1.7.0 → 1.7.1 (`plugin.json` + `marketplace.json`). Also includes since 1.7.0:
+  GitHub Pages landing sync for v1.5–v1.7 and dropping a company design-system name from generic examples.
+
 ## 1.7.0 — Bundle the `design-qa` tool skill: a Figma-overlay pixel-matching fix loop (2026-07-24)
 
 Non-breaking MINOR (additive). Bundles a new **`design-qa`** skill (`skills/design-qa/`) — a hands-on
